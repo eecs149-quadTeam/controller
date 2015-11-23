@@ -1,4 +1,5 @@
-function [xout,yout,traversedout,orientationout] = sub_controller(x, y, orientation, max_x, max_y, traversed_location)
+%controller for quadrant
+function [xout,yout,traversedout,orientationout] = sub_controller(x, y, orientation, max_x, max_y, traversed_location,x_prev,y_prev)
 
 %implement state diagrams for the controller with only one robot
 
@@ -27,6 +28,9 @@ traversedout = unique(cat(1,traversed_location,[x,y]),'rows','stable');
 % else
 %     traversedout = traversed_location;
 % end
+
+%random number to decide if the robot will go to traversed or untraversed
+%locations.
 random_gen = randsample(100,1);
 %finding neighbors of current location
 i = 1;
@@ -47,19 +51,24 @@ if (x - 1 >= min_x)
     neighbor(i,:) = [x-1,y];
     i = i + 1;
 end
-if (random_gen > [100])
+
+
+if (random_gen > 100)
     %choose traversed locations that are neighbors of current
     %location
+    disp('going to traversed')
     i = 1;
     j = 1;
     options = [];
     while (i <= size(neighbor,1))
-        if (ismember(neighbor(i,:),traversedout, 'rows') == 1)
+
+        if (ismember(neighbor(i,:),traversedout, 'rows') == 1 && neighbor(i,1) ~= x_prev && neighbor(i,2) ~= y_prev)
             options(j,:) = neighbor(i,:);
             j = j + 1;
         end
         i = i + 1;
     end
+    options
     %random number that will decide which orientation the robot
     %will go. High chance of maintaining current orientation.
     [xout,yout, orientationout] = next_orientation(x, y, orientation, options, neighbor);
@@ -68,6 +77,7 @@ else
     i = 1;
     j = 1;
     options = [];
+    %selecting which points are untraversed and saving it in 'options'
     while (i <= size(neighbor,1))
         if (ismember(neighbor(i,:),traversedout, 'rows') == 0)
             options(j,:) = neighbor(i,:);

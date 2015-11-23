@@ -2,7 +2,7 @@
 %have two choices of quadrants. It should choose the quadrant that has not
 %been traversed. If both traversed or untraversed, choose one by flipping a
 %coin.
-function [xout, yout, orientationout, quadout] = switch_nearest_quadrant(x,y,orientation,quadrant,quadrants_traversed)
+function [xout, yout, orientationout, quadout] = switch_nearest_quadrant(x,y,quadrant,quadrants_traversed)
 QUADRANT1 = 1; %1 corresponds to top left
 QUADRANT2 = 2; %2 corresponds to top right
 QUADRANT3 = 3; %3 corresponds to bottom left
