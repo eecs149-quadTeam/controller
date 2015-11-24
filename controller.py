@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
     Kobuki randomized path controller.
 
@@ -6,12 +7,16 @@
 
 import random
 import copy
+import asyncio
+import websockets
+
 from enum import Enum
 
 # Constants
 TRAN1 = 2
 TRAN2 = 3
 TRAN1_2 = 4
+
 QUADRANT1 = 1
 QUADRANT2 = 2
 QUADRANT3 = 3
@@ -22,11 +27,13 @@ QUADRANT_NEIGHBORS = {
     QUADRANT3: set([QUADRANT1, QUADRANT4]),
     QUADRANT4: set([QUADRANT2, QUADRANT3])
 }
+
 WIDTH = 6
 HEIGHT = 6
 Q_AREA = WIDTH / 2 * HEIGHT / 2
 NUM_ROBOTS = 1
-NUM_STEPS = 100
+
+NUM_STEPS = 40
 
 class Orientation(Enum):
     N = 1
@@ -76,8 +83,11 @@ class Robot:
     def will_block(self, x, y, traversed):
         return len(traversed) == Q_AREA - 1
 
+    # All local neighbors are traversed
     def is_blocked(self):
-        return len(self.traversed) == Q_AREA - 1
+        neighbors = self.get_local_neighbors()
+        diff = neighbors.difference(self.traversed)
+        return len(neighbors.difference(self.traversed)) == 0
 
     # Returns true if my current position and quadrant makes switching into a
     # new quadrant a valid move
@@ -97,6 +107,7 @@ class Robot:
             return x == 1 or y == 3
 
     # Returns new (x, y), quadrant, and orientation from current x, y, and quadrant
+    # Assumes at the edge
     def switch_nearest_quadrant(self):
         q = self.quadrant
         x = self.x
@@ -154,28 +165,48 @@ class Robot:
 
         if q == QUADRANT1:
             if x == 3 and y == 1:
-                return QUADRANT2 if rand > 0.5 else QUADRANT3
+                if QUADRANT1 in self.traversed_quadrants:
+                    return QUADRANT2
+                elif QUADRANT2 in self.traversed_quadrants:
+                    return QUADRANT1
+                else:
+                    return QUADRANT2 if rand > 0.5 else QUADRANT3
             elif x == 3:
                 return QUADRANT2
             elif y == 1:
                 return QUADRANT1
         elif q == QUADRANT2:
             if x == 1 and y == 1:
-                return QUADRANT1 if rand > 0.5 else QUADRANT4
+                if QUADRANT1 in self.traversed_quadrants:
+                    return QUADRANT4
+                elif QUADRANT4 in self.traversed_quadrants:
+                    return QUADRANT1
+                else:
+                    return QUADRANT1 if rand > 0.5 else QUADRANT4
             elif x == 1:
                 return QUADRANT1
             elif y == 1:
                 return QUADRANT4
         elif q == QUADRANT3:
             if x == 3 and y == 3:
-                return QUADRANT1 if rand > 0.5 else QUADRANT4
+                if QUADRANT1 in self.traversed_quadrants:
+                    return QUADRANT4
+                elif QUADRANT4 in self.traversed_quadrants:
+                    return QUADRANT1
+                else:
+                    return QUADRANT1 if rand > 0.5 else QUADRANT4
             elif x == 3:
                 return QUADRANT4
             elif y == 3:
                 return QUADRANT1
         elif q == QUADRANT4:
             if x == 1 and y == 3:
-                return QUADRANT2 if rand > 0.5 else QUADRANT3
+                if QUADRANT2 in self.traversed_quadrants:
+                    return QUADRANT3
+                elif QUADRANT3 in self.traversed_quadrants:
+                    return QUADRANT2
+                else:
+                    return QUADRANT2 if rand > 0.5 else QUADRANT3
             elif x == 1:
                 return QUADRANT3
             elif y == 3:
@@ -232,8 +263,6 @@ class Robot:
         if self.state == RobotState.STABLE:
             if self.is_blocked():
                 # Currently blocked
-                print("blocked")
-
                 prev_q = self.quadrant
                 self.state = RobotState.TRANSITIONING
                 self.next_location() # moves to next location
@@ -241,20 +270,26 @@ class Robot:
                 if self.quadrant != prev_q:
                     self.state = RobotState.STABLE
             else:
+                self.move_within_quadrant()
+
                 # Get next location and next next location
                 # One of next two locations will block
-                next = copy.copy(self)
+                """
+                next = copy.deepcopy(self)
                 next.move_within_quadrant()
-                next_next = copy.copy(next)
+                next_next = copy.deepcopy(next)
                 next_next.move_within_quadrant()
 
                 if not next_next.is_blocked():
                     self.copy_state(next)
+
                 elif next.is_blocked() or next_next.is_blocked():
                     # If going to be blocked, move quadrants
                     if self.can_switch_quadrant():
                         self.copy_state(next)
+                        print ("can switch quadrant")
                     else:
+                        print ("can't switch quadrant")
                         # If going to be blocked and can't switch quadrants, switch then reset traversed
                         x_new, y_new, o_new, q_new = self.switch_nearest_quadrant()
                         self.x = x_new
@@ -262,6 +297,7 @@ class Robot:
                         self.orientation = o_new
                         self.quadrant = q_new
                         self.traversed.clear()
+                """
         elif self.state == RobotState.TRANSITIONING:
             prev_q = self.quadrant
             self.next_location()
@@ -287,7 +323,6 @@ class Robot:
         neighbors = self.get_local_neighbors()
 
         self.traversed.add((self.x, self.y))
-        print(self.traversed)
 
         if rand > 100:
             # TODO: Choose traversed locations that are neighbors of current location
@@ -330,6 +365,7 @@ class Robot:
         y = self.y
         untraversed_neighbor_quadrants = self.get_untraversed_neighbor_quadrants()
         neighbor_quadrant = list(untraversed_neighbor_quadrants)[0]
+
         x_new, y_new, o_new, q_new = self.switch_nearest_quadrant()
 
         if q_new in self.traversed_quadrants:
@@ -384,7 +420,6 @@ class Robot:
         self.y = y_new
         self.orientation = o_new
         self.quadrant = q_new
-
 
     def move_towards_quadrant(self):
         q = self.quadrant
@@ -534,7 +569,7 @@ class Grid:
                 x = xg - x_mid
                 y = yg - y_mid
                 quadrant = QUADRANT2
-        return (x, y, quadrant)
+        return (int(x), int(y), quadrant)
 
     @staticmethod
     def local_to_global(x, y, quadrant):
@@ -542,20 +577,30 @@ class Grid:
         x_mid = WIDTH / 2
         y_mid = HEIGHT / 2
 
-        # Don't need to modify for Q1
+        # Don't need to modify for Q3
         if quadrant == QUADRANT4:
             xg += x_mid
-        elif quadrant == QUADRANT3:
+        elif quadrant == QUADRANT1:
             yg += y_mid
-        elif quadrant == QUADRANT4:
+        elif quadrant == QUADRANT2:
             xg += x_mid
             yg += y_mid
 
-        return (xg, yg)
+        return (int(xg), int(yg))
 
 r1 = Robot()
 grid = Grid(robot=r1)
 
-for i in range(NUM_STEPS):
-    grid.step()
+@asyncio.coroutine
+def send_step():
+    ws = yield from websockets.connect("ws://localhost:5000")
+
+    for i in range(NUM_STEPS):
+        yield from ws.send(str(r1.xg) + "," + str(r1.yg))
+
+        grid.step()
+
+        yield from asyncio.sleep(1.5)
+
+asyncio.get_event_loop().run_until_complete(send_step())
 
