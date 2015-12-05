@@ -36,10 +36,10 @@ NUM_ROBOTS = 1
 NUM_STEPS = 40
 
 class Orientation(Enum):
-    N = 1
-    E = 2
-    S = 3
-    W = 4
+    N = 0
+    E = 1
+    S = 2
+    W = 3
 
     # Returns an orientation given an initial location and a next location
     @staticmethod
@@ -55,6 +55,16 @@ class Orientation(Enum):
             return Orientation.N
         elif y2 < y1:
             return Orientation.S
+
+    def __str__(self):
+        if self.value == 0:
+            return "NORTH"
+        elif self.value == 1:
+            return "EAST"
+        elif self.value == 2:
+            return "SOUTH"
+        elif self.value == 3:
+            return "WEST"
 
 class RobotState(Enum):
     STABLE = 1
@@ -540,7 +550,6 @@ class Grid:
         if len(r.traversed_quadrants) >= 4:
             r.traversed_quadrants.clear()
 
-        print(r)
         r.move()
 
 
@@ -595,10 +604,19 @@ grid = Grid(robot=r1)
 def send_step():
     ws = yield from websockets.connect("ws://localhost:5000")
 
+    print("Initial state of Kobuki:")
+    print(str(r1))
+
     for i in range(NUM_STEPS):
-        yield from ws.send(str(r1.xg) + "," + str(r1.yg))
+        x0, y0 = r1.xg, r1.yg
 
         grid.step()
+
+        dir = Orientation.get_orientation((x0, y0), (r1.xg, r1.yg))
+
+        print("Moving Kobuki " + str(dir) + ".")
+        print(r1)
+        yield from ws.send(str(dir.value))
 
         yield from asyncio.sleep(1.5)
 
