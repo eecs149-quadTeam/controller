@@ -608,15 +608,16 @@ def send_step():
     print(str(r1))
 
     for i in range(NUM_STEPS):
-        x0, y0 = r1.xg, r1.yg
+        o0 = r1.orientation.value
 
         grid.step()
 
-        dir = Orientation.get_orientation((x0, y0), (r1.xg, r1.yg))
+        o1 = r1.orientation.value
+        turn_amt = (o1 - o0 + 4) % 4
 
-        print("Moving Kobuki " + str(dir) + ".")
+        print("Turning Kobuki " + str(turn_amt * 90) + " deg and moving forward 1 step.")
         print(r1)
-        yield from ws.send(str(dir.value))
+        yield from ws.send(str(turn_amt))
 
         yield from asyncio.sleep(1.5)
 
