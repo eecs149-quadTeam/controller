@@ -619,7 +619,7 @@ def send_step():
         print(r1)
         yield from ws.send(str(turn_amt))
 
-        yield from asyncio.sleep(1.5)
+        yield from asyncio.sleep(15)
 
 asyncio.get_event_loop().run_until_complete(send_step())
 
