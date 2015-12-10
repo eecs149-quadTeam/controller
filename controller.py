@@ -34,6 +34,8 @@ Q_AREA = WIDTH / 2 * HEIGHT / 2
 NUM_ROBOTS = 1
 
 NUM_STEPS = 40
+NUM_RUNS = 2000
+MAX_NUM_STEPS = 50
 
 class Orientation(Enum):
     N = 0
@@ -71,7 +73,12 @@ class RobotState(Enum):
     TRANSITIONING = 2
 
 class Robot:
-    def __init__(self, x=1, y=1, xg=1, yg=1, orientation=Orientation.N, quadrant=QUADRANT3, state=RobotState.STABLE):
+    def __init__(self,
+                 x = 1, y = 1,
+                 xg = 1, yg = 1,
+                 orientation = Orientation.N,
+                 quadrant = QUADRANT3,
+                 state = RobotState.STABLE):
         self.x = x
         self.y = y
         self.xg = xg
@@ -81,17 +88,14 @@ class Robot:
         self.state = state
         self.traversed = set()
         self.traversed_quadrants = set()
+        self.finished = False
+        self.last_quadrant = None
 
         # Previous two states of this Robot, for look-ahead
         self.prev_states = list()
 
     def __str__(self):
         return "Robot(x=" + str(self.x) + ", y=" + str(self.y) + ", q=" + str(self.quadrant) + ")"
-
-    # Returns true if moving this Robot to (x, y) will cause it to be blocked
-    # on all sides.
-    def will_block(self, x, y, traversed):
-        return len(traversed) == Q_AREA - 1
 
     # All local neighbors are traversed
     def is_blocked(self):
@@ -282,32 +286,6 @@ class Robot:
             else:
                 self.move_within_quadrant()
 
-                # Get next location and next next location
-                # One of next two locations will block
-                """
-                next = copy.deepcopy(self)
-                next.move_within_quadrant()
-                next_next = copy.deepcopy(next)
-                next_next.move_within_quadrant()
-
-                if not next_next.is_blocked():
-                    self.copy_state(next)
-
-                elif next.is_blocked() or next_next.is_blocked():
-                    # If going to be blocked, move quadrants
-                    if self.can_switch_quadrant():
-                        self.copy_state(next)
-                        print ("can switch quadrant")
-                    else:
-                        print ("can't switch quadrant")
-                        # If going to be blocked and can't switch quadrants, switch then reset traversed
-                        x_new, y_new, o_new, q_new = self.switch_nearest_quadrant()
-                        self.x = x_new
-                        self.y = y_new
-                        self.orientation = o_new
-                        self.quadrant = q_new
-                        self.traversed.clear()
-                """
         elif self.state == RobotState.TRANSITIONING:
             prev_q = self.quadrant
             self.next_location()
@@ -539,6 +517,8 @@ class Grid:
         self.width = width
         self.height = height
         self.robot = robot
+        self.finished = False
+        self.traversed = set()
 
     # Moves each of robots in self.robots one step
     # Currently assumes only one robot
@@ -547,10 +527,18 @@ class Grid:
         r = self.robot
 
         r.traversed_quadrants.add(r.quadrant)
-        if len(r.traversed_quadrants) >= 4:
-            r.traversed_quadrants.clear()
+        self.traversed.add((r.xg, r.yg))
+
+        if r.finished and r.last_quadrant != r.quadrant:
+            self.finished = True
+            r.finished = False
 
         r.move()
+
+        if len(r.traversed_quadrants) >= 4:
+            r.traversed_quadrants.clear()
+            r.finished = True
+            r.last_quadrant = r.quadrant
 
 
     # Converts global coords, 0 <= xg <= WIDTH and 0 <= yg <= HEIGHT to local
@@ -600,9 +588,35 @@ class Grid:
 r1 = Robot()
 grid = Grid(robot=r1)
 
+def calculate_percentage():
+    total = 0.0
+    total_steps = 0
+    for i in range(NUM_RUNS):
+        num_steps = 0
+
+        r1 = Robot()
+        grid = Grid(robot=r1)
+
+        while not grid.finished and num_steps < MAX_NUM_STEPS:
+            grid.step()
+            num_steps += 1
+
+        num_cells = WIDTH * HEIGHT
+        num_traversed = len(grid.traversed)
+        percent_traversed = num_traversed / num_cells
+
+        print("Run #{0}: % traversed: {1}, # steps: {2}".format(i, percent_traversed, num_steps))
+        total += percent_traversed
+        total_steps += num_steps
+
+    return (total / NUM_RUNS, total_steps / NUM_RUNS)
+
+avg_percent, avg_steps = calculate_percentage()
+print("For {0} runs, avg. % traversed: {1}, avg. # steps: {2}".format(NUM_RUNS, avg_percent, avg_steps));
+
 @asyncio.coroutine
 def send_step():
-    ws = yield from websockets.connect("ws://localhost:5000")
+    # ws = yield from websockets.connect("ws://localhost:5000")
 
     print("Initial state of Kobuki:")
     print(str(r1))
@@ -615,11 +629,11 @@ def send_step():
         o1 = r1.orientation.value
         turn_amt = (o1 - o0 + 4) % 4
 
-        print("Turning Kobuki " + str(turn_amt * 90) + " deg and moving forward 1 step.")
-        print(r1)
-        yield from ws.send(str(turn_amt))
+        #print("Turning Kobuki " + str(turn_amt * 90) + " deg and moving forward 1 step.")
+        #print(r1)
+        #yield from ws.send(str(turn_amt))
 
-        yield from asyncio.sleep(15)
+        #yield from asyncio.sleep(15)
 
-asyncio.get_event_loop().run_until_complete(send_step())
+# asyncio.get_event_loop().run_until_complete(send_step())
 
