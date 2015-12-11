@@ -9,13 +9,11 @@ import random
 import copy
 import asyncio
 import websockets
+import queue
 
 from enum import Enum
 
 # Constants
-TRAN1 = 2
-TRAN2 = 3
-TRAN1_2 = 4
 
 QUADRANT1 = 1
 QUADRANT2 = 2
@@ -28,9 +26,11 @@ QUADRANT_NEIGHBORS = {
     QUADRANT4: set([QUADRANT2, QUADRANT3])
 }
 
-WIDTH = 6
+WIDTH = 9
 HEIGHT = 6
-Q_AREA = WIDTH / 2 * HEIGHT / 2
+Q_WIDTH = 3
+Q_HEIGHT = 2
+ASSETS = list()
 NUM_ROBOTS = 1
 
 NUM_STEPS = 40
@@ -86,8 +86,20 @@ class Robot:
         self.orientation = orientation
         self.quadrant = quadrant
         self.state = state
+
+        # Traversed locations in local quadrant
         self.traversed = set()
+
+        # Set of all traversed quadrants
         self.traversed_quadrants = set()
+
+        # List of assets assigned to this robot
+        self.assets = list()
+
+        # Optimal path through all of self.assets
+        self.asset_path = list()
+
+        # For analytics
         self.finished = False
         self.last_quadrant = None
 
@@ -99,7 +111,7 @@ class Robot:
 
     # All local neighbors are traversed
     def is_blocked(self):
-        neighbors = self.get_local_neighbors()
+        neighbors = Grid.get_local_neighbors((self.x, self.y))
         diff = neighbors.difference(self.traversed)
         return len(neighbors.difference(self.traversed)) == 0
 
@@ -255,23 +267,6 @@ class Robot:
         self.orientation = robot.orientation
         self.quadrant = robot.quadrant
 
-    # Get set of (x,y) tuples of valid neighbors in current quadrant
-    def get_local_neighbors(self):
-        q_width = WIDTH / 2
-        q_height = HEIGHT / 2
-        neighbors = set()
-
-        if (self.x < q_width):
-            neighbors.add((self.x + 1, self.y))
-        if (self.x > 1):
-            neighbors.add((self.x - 1, self.y))
-        if (self.y < q_height):
-            neighbors.add((self.x, self.y + 1))
-        if (self.y > 1):
-            neighbors.add((self.x, self.y - 1))
-
-        return neighbors
-
     # Moves the robot one step
     def move(self):
         if self.state == RobotState.STABLE:
@@ -308,7 +303,7 @@ class Robot:
     def move_within_quadrant(self):
         rand = random.random() * 100
         rand_dir = random.random() * 100
-        neighbors = self.get_local_neighbors()
+        neighbors = Grid.get_local_neighbors((self.x, self.y))
 
         self.traversed.add((self.x, self.y))
 
@@ -513,12 +508,84 @@ class Robot:
         self.quadrant = q_new
 
 class Grid:
-    def __init__(self, width=WIDTH, height=HEIGHT, robot=None):
+    def __init__(self,
+                 width = WIDTH,
+                 height = HEIGHT,
+                 assets = ASSETS,
+                 robots = None):
         self.width = width
         self.height = height
-        self.robot = robot
+        self.robots = robots
         self.finished = False
         self.traversed = set()
+
+        # Set of (x, y) locations of assets in this Grid
+        self.assets = assets
+
+        self.distribute_assets()
+        self.compute_asset_paths()
+
+    # Distributes self.assets to self.robots by quadrants.
+    # There's probably a better way to do this
+    def distribute_assets(self):
+        for asset_loc in self.assets:
+            closest_robot = None
+            min_dist = float("inf")
+            assigned = False
+
+            for robot in self.robots:
+                if asset_loc in robot.assets:
+                    assigned = True
+
+            # Stop if asset is already assigned
+            if assigned:
+                continue
+
+            for robot in self.robots:
+                robot_loc = (robot.xg, robot.yg)
+                dist = Grid.dist(robot_loc, asset_loc)
+
+                if dist < min_dist or closest_robot is None:
+                    min_dist = dist
+                    closest_robot = robot
+
+            # Assign asset to closest robot
+            closest_robot.assets.append(asset_loc)
+
+            # Additionally assign all assets in that quadrant to the same robot
+            asset_quadrant = self.get_quadrant(asset_loc)
+            for asset in self.assets:
+                q = self.get_quadrant(asset)
+
+                if q == asset_quadrant and asset != asset_loc:
+                    closest_robot.assets.append(asset)
+
+    # Compute global asset paths for self.robots. Assumes self.robots have
+    # been assigned paths.
+    def compute_asset_paths(self):
+        for robot in self.robots:
+            asset_path = list()
+
+            init = (robot.xg, robot.yg)
+            for asset_loc in robot.assets:
+                next_loc = asset_loc
+                asset_path.append(Grid.get_shortest_path_global(init, next_loc))
+                init = next_loc
+
+            robot.asset_path = asset_path
+
+
+    # Returns the quadrant that loc is in.
+    # Quadrants are ordered from the top left, while the grid is ordered
+    # starting from (1, 1) in the bottom left
+    @staticmethod
+    def get_quadrant(loc):
+        x, y = loc
+        col = 1 + int((x - 1) / Q_WIDTH)
+        row = int((y - 1) / Q_HEIGHT)
+        num_rows = int(HEIGHT / Q_HEIGHT)
+
+        return (num_rows - row - 1) * num_rows + col
 
     # Moves each of robots in self.robots one step
     # Currently assumes only one robot
@@ -539,7 +606,6 @@ class Grid:
             r.traversed_quadrants.clear()
             r.finished = True
             r.last_quadrant = r.quadrant
-
 
     # Converts global coords, 0 <= xg <= WIDTH and 0 <= yg <= HEIGHT to local
     # coords for a particular quadrant.
@@ -585,8 +651,120 @@ class Grid:
 
         return (int(xg), int(yg))
 
+    # Get set of (x,y) tuples of valid neighbors in current quadrant
+    @staticmethod
+    def get_local_neighbors(loc):
+        x, y = loc
+        q_width = WIDTH / 2
+        q_height = HEIGHT / 2
+        neighbors = set()
+
+        if (x < q_width):
+            neighbors.add((x + 1, y))
+        if (x > 1):
+            neighbors.add((x - 1, y))
+        if (y < q_height):
+            neighbors.add((x, y + 1))
+        if (y > 1):
+            neighbors.add((x, y - 1))
+
+        return neighbors
+
+    @staticmethod
+    def get_global_neighbors(loc):
+        x, y = loc
+        neighbors = set()
+
+        if (x < WIDTH):
+            neighbors.add((x + 1, y))
+        if (x > 1):
+            neighbors.add((x - 1, y))
+        if (y < HEIGHT):
+            neighbors.add((x, y + 1))
+        if (y > 1):
+            neighbors.add((x, y - 1))
+
+        return neighbors
+
+    # Computes the min. Manhattan distance between loc1 and loc2
+    @staticmethod
+    def dist(loc1, loc2):
+        x1, y1 = loc1
+        x2, y2 = loc2
+        return (x2 - x1) + (y2 - y1)
+
+    @staticmethod
+    def longest_path(loc1, loc2):
+        print("HI")
+        # TODO
+
+    @staticmethod
+    def get_shortest_path_global(loc1, loc2):
+        return Grid.get_shortest_path(loc1, loc2, Grid.get_global_neighbors)
+
+    @staticmethod
+    def get_shortest_path_local(loc1, loc2):
+        return Grid.get_shortest_path(loc1, loc2, Grid.get_local_neighbors)
+
+    # Computes the shortest path from loc2 to loc2.
+    # Returns a list of (x, y) tuples or None if no path found
+    @staticmethod
+    def get_shortest_path(loc1, loc2, neighbor_func):
+        x1, y1 = loc1
+        x2, y2 = loc2
+
+        q = queue.Queue()
+        q.put(loc1)
+
+        visited = set()
+        visited.add(loc1)
+
+        parents = dict()
+
+        while not q.empty():
+            curr = q.get()
+            neighbors = list(neighbor_func(curr))
+
+            for neighbor in neighbors:
+                if neighbor not in visited:
+                    parents[neighbor] = curr
+                    visited.add(neighbor)
+                    q.put(neighbor)
+
+                    if neighbor == loc2:
+                        result = list()
+                        result.append(neighbor)
+
+                        while neighbor in parents:
+                            parent = parents[neighbor]
+                            result.append(parent)
+                            neighbor = parent
+
+                        result.reverse()
+                        return result
+
+        return None
+
 r1 = Robot()
-grid = Grid(robot=r1)
+asset_lists = list()
+asset_lists.append((1, 3))
+asset_lists.append((5, 5))
+grid = Grid(
+    robots = [r1],
+    assets = asset_lists)
+
+print(r1.asset_path)
+
+#p = Grid.shortest_path((1, 1), (3, 1))
+#print(p)
+
+"""
+print(Grid.get_quadrant((5, 4)))
+print(Grid.get_quadrant((1, 1)))
+print(Grid.get_quadrant((8, 5)))
+print(Grid.get_quadrant((3, 2)))
+print(Grid.get_quadrant((4, 2)))
+"""
 
 def calculate_percentage():
     total = 0.0
@@ -611,8 +789,10 @@ def calculate_percentage():
 
     return (total / NUM_RUNS, total_steps / NUM_RUNS)
 
+"""
 avg_percent, avg_steps = calculate_percentage()
 print("For {0} runs, avg. % traversed: {1}, avg. # steps: {2}".format(NUM_RUNS, avg_percent, avg_steps));
+"""
 
 @asyncio.coroutine
 def send_step():
