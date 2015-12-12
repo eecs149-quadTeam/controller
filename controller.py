@@ -19,6 +19,12 @@ QUADRANT1 = 1
 QUADRANT2 = 2
 QUADRANT3 = 3
 QUADRANT4 = 4
+QUADRANT5 = 5
+QUADRANT6 = 6
+QUADRANT7 = 7
+QUADRANT8 = 8
+QUADRANT9 = 9
+
 QUADRANT_NEIGHBORS = {
     QUADRANT1: set([QUADRANT2, QUADRANT3]),
     QUADRANT2: set([QUADRANT1, QUADRANT4]),
@@ -77,7 +83,7 @@ class Robot:
                  x = 1, y = 1,
                  xg = 1, yg = 1,
                  orientation = Orientation.N,
-                 quadrant = QUADRANT3,
+                 quadrant = QUADRANT7,
                  state = RobotState.STABLE):
         self.x = x
         self.y = y
@@ -553,9 +559,9 @@ class Grid:
             closest_robot.assets.append(asset_loc)
 
             # Additionally assign all assets in that quadrant to the same robot
-            asset_quadrant = self.get_quadrant(asset_loc)
+            asset_quadrant = Grid.get_quadrant(asset_loc)
             for asset in self.assets:
-                q = self.get_quadrant(asset)
+                q = Grid.get_quadrant(asset)
 
                 if q == asset_quadrant and asset != asset_loc:
                     closest_robot.assets.append(asset)
@@ -691,7 +697,7 @@ class Grid:
     def dist(loc1, loc2):
         x1, y1 = loc1
         x2, y2 = loc2
-        return (x2 - x1) + (y2 - y1)
+        return abs((x2 - x1) + (y2 - y1))
 
     @staticmethod
     def longest_path(loc1, loc2):
@@ -746,25 +752,17 @@ class Grid:
         return None
 
 r1 = Robot()
+r2 = Robot(xg = 6, yg = 6)
+print(str(r2))
 asset_lists = list()
 asset_lists.append((1, 3))
 asset_lists.append((5, 5))
 grid = Grid(
-    robots = [r1],
+    robots = [r1, r2],
     assets = asset_lists)
 
 print(r1.asset_path)
-
-#p = Grid.shortest_path((1, 1), (3, 1))
-#print(p)
-
-"""
-print(Grid.get_quadrant((5, 4)))
-print(Grid.get_quadrant((1, 1)))
-print(Grid.get_quadrant((8, 5)))
-print(Grid.get_quadrant((3, 2)))
-print(Grid.get_quadrant((4, 2)))
-"""
+print(r2.asset_path)
 
 def calculate_percentage():
     total = 0.0
