@@ -159,6 +159,44 @@ class Robot:
         self.yg = yg
         self.quadrant = q
 
+    # Assigns a new value to self.path, assumes self.next_goal is set
+    def probabilistic_assign_path(self):
+        global_loc = (self.xg, self.yg)
+
+        rand = random.random()
+        if rand < 0.5:
+            # Compute long path
+            paths = []
+            neighbors = Grid.get_local_neighbors((self.x, self.y))
+            untraversed_neighbors = neighbors.difference(self.traversed)
+            untraversed_neighbors = map(lambda neighbor: Grid.local_to_global(neighbor, self.quadrant), untraversed_neighbors)
+
+            invalid_locs = set(self.traversed)
+            invalid_locs.add((self.xg, self.yg))
+
+            for neighbor_loc in untraversed_neighbors:
+                paths.append(Grid.get_shortest_path_global(
+                    neighbor_loc,
+                    self.next_goal,
+                    invalid_locs))
+
+            paths = list(filter(None, paths))
+            max_path = max(paths, key=len)
+            max_path_length = len(max_path)
+
+            long_paths = list(filter(lambda path: len(path) == max_path_length, paths))
+
+            # Choose random path
+            if len(long_paths) > 1:
+                rand_index = random.randint(0, len(long_paths) - 1)
+                max_path = long_paths[rand_index]
+
+            self.path = max_path
+        else:
+            # Compute short path
+            self.path = Grid.get_shortest_path_global(global_loc, self.next_goal)
+            self.path.pop(0)
+
     def local_path_traversal(self):
         global_loc = (self.xg, self.yg)
 
@@ -194,33 +232,8 @@ class Robot:
             else:
                 # If the next asset IS in the current quadrant, path to asset
                 self.next_goal = next_asset
-
-                paths = []
-                neighbors = Grid.get_local_neighbors((self.x, self.y))
-                untraversed_neighbors = neighbors.difference(self.traversed)
-                untraversed_neighbors = map(lambda neighbor: Grid.local_to_global(neighbor, self.quadrant), untraversed_neighbors)
-
-                invalid_locs = set(self.traversed)
-                invalid_locs.add((self.xg, self.yg))
-
-                for neighbor_loc in untraversed_neighbors:
-                    path = Grid.get_shortest_path_global(
-                        neighbor_loc,
-                        next_asset,
-                        invalid_locs)
-                    paths.append(path)
-
-                paths = list(filter(None, paths))
-                max_path = max(paths, key=len)
-                max_path_length = len(max_path)
-
-                long_paths = list(filter(lambda path: len(path) == max_path_length, paths))
-
-                if len(long_paths) > 1:
-                    rand_index = random.randint(0, len(long_paths) - 1)
-                    max_path = long_paths[rand_index]
-
-                self.path = max_path
+                self.probabilistic_assign_path()
+                # self.path = Grid.get_shortest_path_global(global_loc, self.next_goal)
 
         next_loc_global = self.path.pop(0)
         self.set_loc_global(next_loc_global)
@@ -237,10 +250,8 @@ class Robot:
             # Assign path to next asset (note: assets shouldn't be empty bc check in self.move)
             asset_loc = self.assets[0]
             self.next_goal = asset_loc
-            self.path = Grid.get_shortest_path_global(global_loc, asset_loc)
-
-            # Remove first location in path (current location)
-            self.path.pop(0)
+            # self.probabilistic_assign_path()
+            self.path = Grid.get_shortest_path_global(global_loc, self.next_goal)
 
         # Get next location in path to next asset
         next_loc_global = self.path.pop(0)
@@ -268,9 +279,9 @@ class Robot:
 
             global_loc = (self.xg, self.yg)
             self.next_goal = closest_loc_global
-            self.path = Grid.get_shortest_path_global(global_loc, closest_loc_global)
 
-            self.path.pop(0)
+            # self.probabilistic_assign_path()
+            self.path = Grid.get_shortest_path_global(global_loc, self.next_goal)
 
         next_loc_global = self.path.pop(0)
         self.set_loc_global(next_loc_global)
@@ -551,7 +562,7 @@ class Grid:
 r1 = Robot()
 r2 = Robot(x = 2, y = 2, xg = 8, yg = 6, quadrant = 3)
 
-asset_list = [(3, 1), (2, 4), (1, 6), (7, 5), (9, 3), (4, 5), (6, 4), (5, 2), (8, 1)]
+asset_list = [(3, 1), (2, 4), (1, 6), (7, 5), (9, 3), (4, 5), (6, 4), (6, 1), (8, 1)]
 
 grid = Grid(
     robots = [r1, r2],
