@@ -252,6 +252,7 @@ class Robot:
         # Get next location in path to next asset
         next_loc_global = self.path.pop(0)
         self.set_loc_global(next_loc_global)
+        self.traversed.add((self.x, self.y))
 
         # If we've entered a new quadrant, clear self.traversed and switch to
         # LOCAL_PATH_TRAVERSAL
@@ -263,6 +264,8 @@ class Robot:
 
     # Explore the current quadrant
     def explore(self):
+        global_loc = (self.xg, self.yg)
+
         if self.path is None or len(self.path) == 0:
             # No goal yet, find point in quadrant closest to next asset
             asset_loc = self.assets[0]
@@ -270,17 +273,18 @@ class Robot:
 
             # Get untraversed quadrant locations
             valid_quadrant_locs = quadrant_locs.difference(self.traversed)
-            closest_loc = min(valid_quadrant_locs, key=lambda loc: Grid.dist(loc, asset_loc))
-            closest_loc_global = Grid.local_to_global(closest_loc, self.quadrant)
+            closest_loc_to_next_asset = min(valid_quadrant_locs, key=lambda loc: Grid.dist(loc, asset_loc))
+            closest_loc_global = Grid.local_to_global(closest_loc_to_next_asset, self.quadrant)
 
-            global_loc = (self.xg, self.yg)
             self.next_goal = closest_loc_global
 
             # self.probabilistic_assign_path()
             self.path = Grid.get_shortest_path_global(global_loc, self.next_goal)
+            self.path.pop(0)
 
         next_loc_global = self.path.pop(0)
         self.set_loc_global(next_loc_global)
+        self.traversed.add((self.x, self.y))
 
         if next_loc_global == self.next_goal:
             self.state = RobotState.SWITCH_QUADRANT
@@ -513,7 +517,7 @@ class Grid:
         return None
 
 r1 = Robot()
-r2 = Robot(x = 2, y = 2, xg = 8, yg = 6, quadrant = 3)
+r2 = Robot(x = 3, y = 2, xg = 9, yg = 6, orientation = Orientation.S, quadrant = 3)
 
 asset_list = [(3, 1), (2, 4), (1, 6), (7, 5), (9, 3)]
 
@@ -525,7 +529,7 @@ grid = Grid(
 def send_step():
     init_delay = 3
     ws1 = yield from websockets.connect("ws://localhost:5000")
-    # ws2 = yield from websockets.connect("ws://localhost:5001")
+    ws2 = yield from websockets.connect("ws://localhost:5001")
 
     print("Beginning simulation in {0} seconds...".format(init_delay))
     print("Asset list: {0}".format(asset_list))
@@ -537,28 +541,36 @@ def send_step():
     yield from asyncio.sleep(init_delay)
 
     while r1.state != RobotState.DONE or r2.state != RobotState.DONE:
-        loc0 = (r1.xg, r1.yg)
-        o0 = r1.orientation.value
+        r1_loc0 = (r1.xg, r1.yg)
+        r2_loc0 = (r2.xg, r2.yg)
+        r1_o0 = r1.orientation.value
+        r2_o0 = r2.orientation.value
 
         grid.step()
 
-        loc1 = (r1.xg, r1.yg)
+        r1_loc1 = (r1.xg, r1.yg)
+        r2_loc1 = (r2.xg, r2.yg)
 
         print("R1: {0}".format(r1))
         print("R2: {0}".format(r2))
 
-        if loc0 != loc1:
-            r1.orientation = Orientation.get_orientation(loc0, loc1)
-            o1 = r1.orientation.value
-            turn_amt = (o1 - o0 + 4) % 4
+        if r1_loc0 != r1_loc1 and r2_loc0 != r2_loc1:
+            r1.orientation = Orientation.get_orientation(r1_loc0, r1_loc1)
+            r2.orientation = Orientation.get_orientation(r2_loc0, r2_loc1)
+            r1_o1 = r1.orientation.value
+            r2_o1 = r2.orientation.value
 
-            print("Turning Kobuki #1 " + str(turn_amt * 90) + " deg and moving forward 1 step.")
+            r1_turn_amt = (r1_o1 - r1_o0 + 4) % 4
+            r2_turn_amt = (r2_o1 - r2_o0 + 4) % 4
 
-            yield from ws1.send(str(turn_amt))
+            print("Turning Kobuki #1 " + str(r1_turn_amt * 90) + " deg and moving forward 1 step.")
+            print("Turning Kobuki #2 " + str(r2_turn_amt * 90) + " deg and moving forward 1 step.")
+
+            yield from ws1.send(str(r1_turn_amt))
+            yield from ws2.send(str(r2_turn_amt))
             # yield from ws1.send(str(r1.xg) + "," + str(r1.yg))
             # yield from ws2.send(str(r2.xg) + "," + str(r2.yg))
-            yield from asyncio.sleep(1)
-
+            yield from asyncio.sleep(5.5)
         print()
 
 asyncio.get_event_loop().run_until_complete(send_step())
