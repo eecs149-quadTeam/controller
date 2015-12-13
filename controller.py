@@ -15,17 +15,6 @@ import itertools
 from enum import Enum
 
 # Constants
-
-QUADRANT1 = 1
-QUADRANT2 = 2
-QUADRANT3 = 3
-QUADRANT4 = 4
-QUADRANT5 = 5
-QUADRANT6 = 6
-QUADRANT7 = 7
-QUADRANT8 = 8
-QUADRANT9 = 9
-
 WIDTH = 9
 HEIGHT = 6
 Q_WIDTH = 3
