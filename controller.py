@@ -22,6 +22,15 @@ Q_HEIGHT = 2
 ASSETS = list()
 NUM_ROBOTS = 1
 
+# Probabilisties
+# Probability that the Kobuki enters "explore" mode after finishing all assets
+# in a quadrant
+P_EXPLORE = 0.2
+
+# Probability that the Kobuki takes an optimal path when navigating to the
+# next asset in a quadrant
+P_OPTIMAL = 0.5
+
 NUM_STEPS = 40
 NUM_RUNS = 2000
 MAX_NUM_STEPS = 50
@@ -86,7 +95,7 @@ class Robot:
                  x = 1, y = 1,
                  xg = 1, yg = 1,
                  orientation = Orientation.N,
-                 quadrant = QUADRANT7,
+                 quadrant = 7,
                  state = RobotState.LOCAL_PATH_TRAVERSAL):
 
         self.x = x
@@ -153,8 +162,10 @@ class Robot:
         global_loc = (self.xg, self.yg)
 
         rand = random.random()
-        if rand < 0.5:
-            # Compute long path
+        if rand > P_OPTIMAL:
+            self.path = Grid.get_shortest_path_global(global_loc, self.next_goal)
+            self.path.pop(0)
+        else:
             paths = []
             neighbors = Grid.get_local_neighbors((self.x, self.y))
             untraversed_neighbors = neighbors.difference(self.traversed)
@@ -175,23 +186,19 @@ class Robot:
 
             long_paths = list(filter(lambda path: len(path) == max_path_length, paths))
 
-            # Choose random path
+            # Choose random path if multiple with same length
             if len(long_paths) > 1:
                 rand_index = random.randint(0, len(long_paths) - 1)
                 max_path = long_paths[rand_index]
 
             self.path = max_path
-        else:
-            # Compute short path
-            self.path = Grid.get_shortest_path_global(global_loc, self.next_goal)
-            self.path.pop(0)
 
     def local_path_traversal(self):
         global_loc = (self.xg, self.yg)
 
         if self.next_goal == global_loc:
-            # We're at the next asset
             self.assets.pop(0)
+
             if len(self.assets) == 0:
                 self.state = RobotState.SWITCH_QUADRANT
                 self.assets = list(self.assets_copy)
@@ -203,23 +210,22 @@ class Robot:
             next_asset_quadrant = Grid.get_quadrant(next_asset)
 
             if next_asset_quadrant != self.quadrant:
-                # Done with all assets in this quadrant, move to next quadrant
-                # OR explore current quadrant
+                # Done with all assets in this quadrant
                 self.next_goal = None
                 self.path = list()
 
                 # TODO: Probabilistic on area covered
                 rand = random.random()
-                if rand < 0.8:
-                    self.state = RobotState.SWITCH_QUADRANT
-                    self.switch_quadrant()
-                else:
+                if rand < P_EXPLORE:
                     self.state = RobotState.EXPLORE
                     self.explore()
+                else:
+                    self.state = RobotState.SWITCH_QUADRANT
+                    self.switch_quadrant()
 
                 return
             else:
-                # If the next asset IS in the current quadrant, path to asset
+                # Next asset is in this quadrant
                 self.next_goal = next_asset
                 self.probabilistic_assign_path()
                 # self.path = Grid.get_shortest_path_global(global_loc, self.next_goal)
@@ -459,49 +465,6 @@ class Grid:
         return abs((x2 - x1) + (y2 - y1))
 
     @staticmethod
-    def get_longest_path_local(loc1, loc2, invalid_locs = set()):
-        return Grid.get_longest_path(loc1, loc2, Grid.get_local_neighbors, invalid_locs)
-
-    @staticmethod
-    def get_longest_path(loc1, loc2, neighbor_func, invalid_locs = set()):
-        x1, y1 = loc1
-        x2, y2 = loc2
-
-        q = queue.Queue()
-        q.put(loc1)
-
-        visited = set()
-        visited.add(loc1)
-
-        result = list()
-        parents = dict()
-
-        while not q.empty():
-            curr = q.get()
-            neighbors = list(neighbor_func(curr))
-
-            for neighbor in neighbors:
-                if neighbor not in visited:
-                    parents[neighbor] = curr
-                    visited.add(neighbor)
-                    q.put(neighbor)
-
-                    if neighbor == loc2:
-                        path = list()
-                        path.append(neighbor)
-                        visited.remove(neighbor)
-
-                        while neighbor in parents:
-                            parent = parents[neighbor]
-                            path.append(parent)
-                            neighbor = parent
-
-                        path.reverse()
-                        result.append(path)
-
-        return result
-
-    @staticmethod
     def get_shortest_path_global(loc1, loc2, invalid_locs = set()):
         return Grid.get_shortest_path(loc1, loc2, Grid.get_global_neighbors, invalid_locs)
 
@@ -551,20 +514,17 @@ class Grid:
 r1 = Robot()
 r2 = Robot(x = 2, y = 2, xg = 8, yg = 6, quadrant = 3)
 
-asset_list = [(3, 1), (2, 4), (1, 6), (7, 5), (9, 3), (4, 5), (6, 4), (6, 1), (8, 1)]
+asset_list = [(3, 1), (2, 4), (1, 6), (7, 5), (9, 3)]
 
 grid = Grid(
     robots = [r1, r2],
     assets = asset_list)
 
-print(r1.asset_path)
-print(r2.asset_path)
-
 @asyncio.coroutine
 def send_step():
     init_delay = 3
     ws1 = yield from websockets.connect("ws://localhost:5000")
-    ws2 = yield from websockets.connect("ws://localhost:5001")
+    # ws2 = yield from websockets.connect("ws://localhost:5001")
 
     print("Beginning simulation in {0} seconds...".format(init_delay))
     print("Asset list: {0}".format(asset_list))
@@ -576,10 +536,12 @@ def send_step():
     yield from asyncio.sleep(init_delay)
 
     while r1.state != RobotState.DONE or r2.state != RobotState.DONE:
+        loc0 = (r1.xg, r1.yg)
         o0 = r1.orientation.value
 
         grid.step()
 
+        loc1 = (r1.xg, r1.yg)
         o1 = r1.orientation.value
         turn_amt = (o1 - o0 + 4) % 4
 
@@ -589,9 +551,9 @@ def send_step():
         print()
         # yield from ws.send(str(turn_amt))
         yield from ws1.send(str(r1.xg) + "," + str(r1.yg))
-        yield from ws2.send(str(r2.xg) + "," + str(r2.yg))
+        # yield from ws2.send(str(r2.xg) + "," + str(r2.yg))
 
-        yield from asyncio.sleep(0.5)
+        yield from asyncio.sleep(1)
 
 asyncio.get_event_loop().run_until_complete(send_step())
 
