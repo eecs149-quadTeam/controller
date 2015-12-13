@@ -1,0 +1,136 @@
+<!doctype html>
+
+<html>
+<head>
+    <title>EE149 Controller</title>
+
+    <style type="text/css">
+        #grid {
+            width: 900px;
+            height: 600px;
+            position: relative;
+        }
+
+        .square {
+            width: 100px;
+            height: 100px;
+            border: 1px solid black;
+            position: absolute;
+            background: white;
+            box-sizing: border-box;
+        }
+
+        .square.traversing {
+            background: blue;
+        }
+
+        .square.traversed {
+            background: lightblue;
+            transition: all 12s;
+        }
+
+        .square-asset {
+            background: none;
+            border: 10px solid yellow;
+            opacity: 0.6;
+        }
+    </style>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.0.0-alpha1/jquery.min.js"></script>
+    <script type="text/javascript">
+        $(function () {
+            var $grid = $('#grid');
+            var r1 = {
+                x: 1,
+                y: 1
+            };
+            var r2 = {
+                x: 8,
+                y: 6
+            };
+            var assetLocs = [[3, 1], [1, 6], [7, 5]];
+
+            function setup() {
+                for (var x = 0; x < 9; x++) {
+                    for (var y = 0; y < 6; y++) {
+                        var left = x * 100;
+                        var top = y * 100;
+                        $grid.append('<div id="sq-' + (x + 1) + '-' + (6 - y) + '" class="square" style="left: ' + left + 'px; top: ' + top + 'px;"></div>');
+                    }
+                }
+
+                assetLocs.forEach(function (loc) {
+                    var left = (loc[0] - 1) * 100;
+                    var top = (6 - loc[1]) * 100;
+
+                    $grid.append('<div class="square square-asset" style="left: ' + left + 'px; top: ' + top + 'px;"></div>');
+                });
+            }
+
+            r1.ws = new WebSocket("ws://localhost:5000");
+            r2.ws = new WebSocket("ws://localhost:5001");
+
+            function applyCoord(robot, coord) {
+                coord = coord.split(",");
+                var x = Number(coord[0]);
+                var y = Number(coord[1]);
+
+                robot.x = x;
+                robot.y = y;
+
+                console.log("Moving robot to " + x + ", " + y);
+            }
+
+            function draw() {
+                var r1id = "sq-" + r1.x + "-" + r1.y;
+                var r2id = "sq-" + r2.x + "-" + r2.y;
+
+                var $r1loc = $('#' + r1id);
+                $r1loc.removeClass('traversed');
+                $r1loc.addClass('traversing');
+
+                setTimeout(function () {
+                    $r1loc.removeClass('traversing');
+                    $r1loc.addClass('traversed');
+                }, 500);
+
+                var $r2loc = $('#' + r2id);
+                $r2loc.removeClass('traversed');
+                $r2loc.addClass('traversing');
+
+                setTimeout(function () {
+                    $r2loc.removeClass('traversing');
+                    $r2loc.addClass('traversed');
+                }, 500);
+            }
+
+            r1.ws.onmessage = function (event) {
+                var msg = event.data;
+
+                console.log("received " + msg + " on from 5000");
+                applyCoord(r1, msg);
+                draw();
+            }
+
+            r2.ws.onmessage = function (event) {
+                var msg = event.data;
+
+                console.log("received " + msg + " on from 5001");
+                applyCoord(r2, msg);
+                draw();
+            }
+
+            setup();
+            draw();
+        });
+    </script>
+</head>
+
+<body>
+    <h1>EECS 149 Control Improvisation</h1>
+
+    <div id="grid">
+
+    </div>
+</body>
+</html>

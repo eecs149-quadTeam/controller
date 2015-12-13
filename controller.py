@@ -138,10 +138,10 @@ class Robot:
         if self.state == RobotState.LOCAL_PATH_TRAVERSAL:
             # Take the next step on path to next goal, deciding between the
             # optimal and non-optimal path.
-            self.move_to_asset_local()
+            self.local_path_traversal()
         elif self.state == RobotState.SWITCH_QUADRANT:
             # Take the next step on optimal path to next quadrant.
-            self.move_to_next_quadrant()
+            self.switch_quadrant()
         elif self.state == RobotState.EXPLORE:
             self.explore()
 
@@ -155,7 +155,7 @@ class Robot:
         self.yg = yg
         self.quadrant = q
 
-    def move_to_asset_local(self):
+    def local_path_traversal(self):
         global_loc = (self.xg, self.yg)
 
         if self.next_goal == global_loc:
@@ -165,11 +165,10 @@ class Robot:
                 self.state = RobotState.DONE
                 return
 
-        # Check if we're now at the asset (in case upon moving into a quadrant,
-        # we've already landed at the asset)
         if self.path is None or len(self.path) == 0:
             next_asset = self.assets[0]
             next_asset_quadrant = Grid.get_quadrant(next_asset)
+
             if next_asset_quadrant != self.quadrant:
                 # Done with all assets in this quadrant, move to next quadrant
                 # OR explore current quadrant
@@ -180,7 +179,7 @@ class Robot:
                 rand = random.random()
                 if rand < 0.8:
                     self.state = RobotState.SWITCH_QUADRANT
-                    self.move_to_next_quadrant()
+                    self.switch_quadrant()
                 else:
                     self.state = RobotState.EXPLORE
                     self.explore()
@@ -189,9 +188,33 @@ class Robot:
             else:
                 # If the next asset IS in the current quadrant, path to asset
                 self.next_goal = next_asset
-                self.path = Grid.get_shortest_path_global(global_loc, next_asset)
 
-                self.path.pop(0)
+                paths = []
+                neighbors = Grid.get_local_neighbors((self.x, self.y))
+                untraversed_neighbors = neighbors.difference(self.traversed)
+                untraversed_neighbors = map(lambda neighbor: Grid.local_to_global(neighbor, self.quadrant), untraversed_neighbors)
+
+                invalid_locs = set(self.traversed)
+                invalid_locs.add((self.xg, self.yg))
+
+                for neighbor_loc in untraversed_neighbors:
+                    path = Grid.get_shortest_path_global(
+                        neighbor_loc,
+                        next_asset,
+                        invalid_locs)
+                    paths.append(path)
+
+                paths = list(filter(None, paths))
+                max_path = max(paths, key=len)
+                max_path_length = len(max_path)
+
+                long_paths = list(filter(lambda path: len(path) == max_path_length, paths))
+
+                if len(long_paths) > 1:
+                    rand_index = random.randint(0, len(long_paths) - 1)
+                    max_path = long_paths[rand_index]
+
+                self.path = max_path
 
         next_loc_global = self.path.pop(0)
         self.set_loc_global(next_loc_global)
@@ -199,7 +222,7 @@ class Robot:
 
     # Take the next step on optimal path to next goal/asset.
     # Assumes self.assets is in order.
-    def move_to_next_quadrant(self):
+    def switch_quadrant(self):
         prev_q = self.quadrant
         global_loc = (self.xg, self.yg)
 
@@ -355,8 +378,6 @@ class Grid:
         return locs
 
     # Returns the quadrant that loc is in.
-    # Quadrants are ordered from the top left, while the grid is ordered
-    # starting from (1, 1) in the bottom left
     @staticmethod
     def get_quadrant(loc):
         x, y = loc
@@ -433,22 +454,60 @@ class Grid:
         return abs((x2 - x1) + (y2 - y1))
 
     @staticmethod
-    def longest_path(loc1, loc2):
-        print("HI")
-        # TODO
+    def get_longest_path_local(loc1, loc2, invalid_locs = set()):
+        return Grid.get_longest_path(loc1, loc2, Grid.get_local_neighbors, invalid_locs)
 
     @staticmethod
-    def get_shortest_path_global(loc1, loc2):
-        return Grid.get_shortest_path(loc1, loc2, Grid.get_global_neighbors)
+    def get_longest_path(loc1, loc2, neighbor_func, invalid_locs = set()):
+        x1, y1 = loc1
+        x2, y2 = loc2
+
+        q = queue.Queue()
+        q.put(loc1)
+
+        visited = set()
+        visited.add(loc1)
+
+        result = list()
+        parents = dict()
+
+        while not q.empty():
+            curr = q.get()
+            neighbors = list(neighbor_func(curr))
+
+            for neighbor in neighbors:
+                if neighbor not in visited:
+                    parents[neighbor] = curr
+                    visited.add(neighbor)
+                    q.put(neighbor)
+
+                    if neighbor == loc2:
+                        path = list()
+                        path.append(neighbor)
+                        visited.remove(neighbor)
+
+                        while neighbor in parents:
+                            parent = parents[neighbor]
+                            path.append(parent)
+                            neighbor = parent
+
+                        path.reverse()
+                        result.append(path)
+
+        return result
 
     @staticmethod
-    def get_shortest_path_local(loc1, loc2):
-        return Grid.get_shortest_path(loc1, loc2, Grid.get_local_neighbors)
+    def get_shortest_path_global(loc1, loc2, invalid_locs = set()):
+        return Grid.get_shortest_path(loc1, loc2, Grid.get_global_neighbors, invalid_locs)
+
+    @staticmethod
+    def get_shortest_path_local(loc1, loc2, invalid_locs = set()):
+        return Grid.get_shortest_path(loc1, loc2, Grid.get_local_neighbors, invalid_locs)
 
     # Computes the shortest path from loc2 to loc2.
     # Returns a list of (x, y) tuples or None if no path found
     @staticmethod
-    def get_shortest_path(loc1, loc2, neighbor_func):
+    def get_shortest_path(loc1, loc2, neighbor_func, invalid_locs = set()):
         x1, y1 = loc1
         x2, y2 = loc2
 
@@ -465,7 +524,7 @@ class Grid:
             neighbors = list(neighbor_func(curr))
 
             for neighbor in neighbors:
-                if neighbor not in visited:
+                if neighbor not in visited and neighbor not in invalid_locs:
                     parents[neighbor] = curr
                     visited.add(neighbor)
                     q.put(neighbor)
@@ -489,7 +548,7 @@ r2 = Robot(x = 2, y = 2, xg = 8, yg = 6, quadrant = 3)
 
 asset_list = list()
 asset_list.append((3, 1))
-asset_list.append((1, 3))
+asset_list.append((1, 6))
 asset_list.append((7, 5))
 
 grid = Grid(
@@ -499,17 +558,42 @@ grid = Grid(
 print(r1.asset_path)
 print(r2.asset_path)
 
-print("Beginning simulation...")
-print("Asset list: " + str(asset_list))
-while r1.state != RobotState.DONE or r2.state != RobotState.DONE:
-    print("ROBOT1: " + str(r1))
-    print("ROBOT2: " + str(r2))
-    print("")
-    grid.step()
+@asyncio.coroutine
+def send_step():
+    delay = 3
+    ws1 = yield from websockets.connect("ws://localhost:5000")
+    ws2 = yield from websockets.connect("ws://localhost:5001")
 
-print(r1)
-print(r2)
+    print("Beginning simulation in " + str(delay) + " seconds...")
+    print("Asset list: " + str(asset_list))
+    print("Initial state of Kobukis:")
+    print("R1: {0}".format(r1))
+    print("R2: {0}".format(r2))
+    print()
 
+    yield from asyncio.sleep(delay)
+
+    while r1.state != RobotState.DONE or r2.state != RobotState.DONE:
+        o0 = r1.orientation.value
+
+        grid.step()
+
+        o1 = r1.orientation.value
+        turn_amt = (o1 - o0 + 4) % 4
+
+        print("Turning Kobuki " + str(turn_amt * 90) + " deg and moving forward 1 step.")
+        print("R1: {0}".format(r1))
+        print("R2: {0}".format(r2))
+        print()
+        # yield from ws.send(str(turn_amt))
+        yield from ws1.send(str(r1.xg) + "," + str(r1.yg))
+        yield from ws2.send(str(r2.xg) + "," + str(r2.yg))
+
+        yield from asyncio.sleep(0.5)
+
+asyncio.get_event_loop().run_until_complete(send_step())
+
+"""
 def calculate_percentage():
     total = 0.0
     total_steps = 0
@@ -533,31 +617,6 @@ def calculate_percentage():
 
     return (total / NUM_RUNS, total_steps / NUM_RUNS)
 
-"""
 avg_percent, avg_steps = calculate_percentage()
 print("For {0} runs, avg. % traversed: {1}, avg. # steps: {2}".format(NUM_RUNS, avg_percent, avg_steps));
 """
-
-@asyncio.coroutine
-def send_step():
-    # ws = yield from websockets.connect("ws://localhost:5000")
-
-    print("Initial state of Kobuki:")
-    print(str(r1))
-
-    for i in range(NUM_STEPS):
-        o0 = r1.orientation.value
-
-        grid.step()
-
-        o1 = r1.orientation.value
-        turn_amt = (o1 - o0 + 4) % 4
-
-        #print("Turning Kobuki " + str(turn_amt * 90) + " deg and moving forward 1 step.")
-        #print(r1)
-        #yield from ws.send(str(turn_amt))
-
-        #yield from asyncio.sleep(15)
-
-# asyncio.get_event_loop().run_until_complete(send_step())
-
