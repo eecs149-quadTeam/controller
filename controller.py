@@ -342,10 +342,8 @@ class Grid:
 
     # Moves each of robots in self.robots one step
     def step(self):
-        r = self.robots[0]
-        self.traversed.add((r.xg, r.yg))
-
-        r.move()
+        for r in self.robots:
+            r.move()
 
     @staticmethod
     def get_quadrant_locs():
@@ -487,27 +485,30 @@ class Grid:
         return None
 
 r1 = Robot()
-r2 = Robot(xg = 6, yg = 6)
+r2 = Robot(x = 2, y = 2, xg = 8, yg = 6, quadrant = 3)
 
 asset_list = list()
 asset_list.append((3, 1))
 asset_list.append((1, 3))
-asset_list.append((2, 6))
-asset_list.append((5, 5))
+asset_list.append((7, 5))
 
 grid = Grid(
-    robots = [r1],
+    robots = [r1, r2],
     assets = asset_list)
 
 print(r1.asset_path)
+print(r2.asset_path)
 
 print("Beginning simulation...")
 print("Asset list: " + str(asset_list))
-while r1.state != RobotState.DONE:
-    print(r1)
+while r1.state != RobotState.DONE or r2.state != RobotState.DONE:
+    print("ROBOT1: " + str(r1))
+    print("ROBOT2: " + str(r2))
+    print("")
     grid.step()
 
 print(r1)
+print(r2)
 
 def calculate_percentage():
     total = 0.0
