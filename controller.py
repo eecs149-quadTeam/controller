@@ -114,6 +114,9 @@ class Robot:
         # List of assets assigned to this robot
         self.assets = list()
 
+        # Copy of assets
+        self.assets_copy = list()
+
         # Next goal location assigned to, generally an asset or virtual asset
         self.next_goal = None
 
@@ -133,7 +136,8 @@ class Robot:
     # Moves the robot one step
     def move(self):
         if len(self.assets) == 0:
-            self.state = RobotState.DONE
+            self.state = RobotState.SWITCH_QUADRANT
+            self.assets = list(self.assets_copy)
 
         if self.state == RobotState.LOCAL_PATH_TRAVERSAL:
             # Take the next step on path to next goal, deciding between the
@@ -162,7 +166,9 @@ class Robot:
             # We're at the next asset
             self.assets.pop(0)
             if len(self.assets) == 0:
-                self.state = RobotState.DONE
+                self.state = RobotState.SWITCH_QUADRANT
+                self.assets = list(self.assets_copy)
+                self.switch_quadrant()
                 return
 
         if self.path is None or len(self.path) == 0:
@@ -311,9 +317,6 @@ class Grid:
 
             actual_path.append(path[len(path) - 1])
 
-            # for j in range(1, len(actual_path)):
-
-
     # Distributes self.assets to self.robots by quadrants.
     # There's probably a better way to do this
     def distribute_assets(self):
@@ -348,6 +351,8 @@ class Grid:
 
                 if q == asset_quadrant and asset != asset_loc:
                     closest_robot.assets.append(asset)
+
+            closest_robot.assets_copy = list(closest_robot.assets)
 
     # Compute global asset paths for self.robots. Assumes self.robots have
     # been assigned paths.
@@ -546,10 +551,7 @@ class Grid:
 r1 = Robot()
 r2 = Robot(x = 2, y = 2, xg = 8, yg = 6, quadrant = 3)
 
-asset_list = list()
-asset_list.append((3, 1))
-asset_list.append((1, 6))
-asset_list.append((7, 5))
+asset_list = [(3, 1), (2, 4), (1, 6), (7, 5), (9, 3), (4, 5), (6, 4), (5, 2), (8, 1)]
 
 grid = Grid(
     robots = [r1, r2],
@@ -560,18 +562,18 @@ print(r2.asset_path)
 
 @asyncio.coroutine
 def send_step():
-    delay = 3
+    init_delay = 3
     ws1 = yield from websockets.connect("ws://localhost:5000")
     ws2 = yield from websockets.connect("ws://localhost:5001")
 
-    print("Beginning simulation in " + str(delay) + " seconds...")
-    print("Asset list: " + str(asset_list))
+    print("Beginning simulation in {0} seconds...".format(init_delay))
+    print("Asset list: {0}".format(asset_list))
     print("Initial state of Kobukis:")
     print("R1: {0}".format(r1))
     print("R2: {0}".format(r2))
     print()
 
-    yield from asyncio.sleep(delay)
+    yield from asyncio.sleep(init_delay)
 
     while r1.state != RobotState.DONE or r2.state != RobotState.DONE:
         o0 = r1.orientation.value

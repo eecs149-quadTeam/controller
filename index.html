@@ -5,6 +5,10 @@
     <title>EE149 Controller</title>
 
     <style type="text/css">
+        body {
+            font-family: sans-serif;
+        }
+
         #grid {
             width: 900px;
             height: 600px;
@@ -31,7 +35,7 @@
 
         .square-asset {
             background: none;
-            border: 10px solid yellow;
+            border: 10px solid orange;
             opacity: 0.6;
         }
     </style>
@@ -48,7 +52,7 @@
                 x: 8,
                 y: 6
             };
-            var assetLocs = [[3, 1], [1, 6], [7, 5]];
+            var assetLocs = [[3, 1], [2, 4], [1, 6], [7, 5], [9, 3], [4, 5], [6, 4], [5, 2], [8, 1]];
 
             function setup() {
                 for (var x = 0; x < 9; x++) {
@@ -127,7 +131,7 @@
 </head>
 
 <body>
-    <h1>EECS 149 Control Improvisation</h1>
+    <h1>EECS 149/249A Control Improvisation</h1>
 
     <div id="grid">
 
