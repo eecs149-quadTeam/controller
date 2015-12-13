@@ -10,6 +10,7 @@ import copy
 import asyncio
 import websockets
 import queue
+import itertools
 
 from enum import Enum
 
@@ -24,13 +25,6 @@ QUADRANT6 = 6
 QUADRANT7 = 7
 QUADRANT8 = 8
 QUADRANT9 = 9
-
-QUADRANT_NEIGHBORS = {
-    QUADRANT1: set([QUADRANT2, QUADRANT3]),
-    QUADRANT2: set([QUADRANT1, QUADRANT4]),
-    QUADRANT3: set([QUADRANT1, QUADRANT4]),
-    QUADRANT4: set([QUADRANT2, QUADRANT3])
-}
 
 WIDTH = 9
 HEIGHT = 6
@@ -75,8 +69,28 @@ class Orientation(Enum):
             return "WEST"
 
 class RobotState(Enum):
-    STABLE = 1
-    TRANSITIONING = 2
+    # Moving from an initial state to the asset in the current quadrant
+    LOCAL_PATH_TRAVERSAL = 1
+
+    # Moving to quadrant with next asset
+    SWITCH_QUADRANT = 2
+
+    # Exploring the current quadrant after visiting all assets
+    EXPLORE = 3
+
+    # Finished exploring all assets
+    DONE = 4
+
+    def __str__(self):
+        v = self.value
+        if v == 1:
+            return "LOCAL_PATH_TRAVERSAL"
+        elif v == 2:
+            return "SWITCH_QUADRANT"
+        elif v == 3:
+            return "EXPLORE"
+        elif v == 4:
+            return "DONE"
 
 class Robot:
     def __init__(self,
@@ -84,7 +98,8 @@ class Robot:
                  xg = 1, yg = 1,
                  orientation = Orientation.N,
                  quadrant = QUADRANT7,
-                 state = RobotState.STABLE):
+                 state = RobotState.LOCAL_PATH_TRAVERSAL):
+
         self.x = x
         self.y = y
         self.xg = xg
@@ -96,422 +111,147 @@ class Robot:
         # Traversed locations in local quadrant
         self.traversed = set()
 
-        # Set of all traversed quadrants
-        self.traversed_quadrants = set()
-
         # List of assets assigned to this robot
         self.assets = list()
+
+        # Next goal location assigned to, generally an asset or virtual asset
+        self.next_goal = None
 
         # Optimal path through all of self.assets
         self.asset_path = list()
 
-        # For analytics
-        self.finished = False
-        self.last_quadrant = None
-
-        # Previous two states of this Robot, for look-ahead
-        self.prev_states = list()
+        # Path to next asset
+        self.path = list()
 
     def __str__(self):
-        return "Robot(x=" + str(self.x) + ", y=" + str(self.y) + ", q=" + str(self.quadrant) + ")"
+        return "Robot(x={0}, y={1}, q={2}, xg={3}, yg={4}, state={5})".format(
+            self.x, self.y, self.quadrant, self.xg, self.yg, self.state)
 
-    # All local neighbors are traversed
-    def is_blocked(self):
-        neighbors = Grid.get_local_neighbors((self.x, self.y))
-        diff = neighbors.difference(self.traversed)
-        return len(neighbors.difference(self.traversed)) == 0
-
-    # Returns true if my current position and quadrant makes switching into a
-    # new quadrant a valid move
-    # switch_quadrant_possible
-    def can_switch_quadrant(self):
-        q = self.quadrant
-        x = self.x
-        y = self.y
-
-        if q == QUADRANT1:
-            return x == 3 or y == 1
-        elif q == QUADRANT2:
-            return x == 1 or y == 1
-        elif q == QUADRANT3:
-            return x == 3 or y == 3
-        elif q == QUADRANT4:
-            return x == 1 or y == 3
-
-    # Returns new (x, y), quadrant, and orientation from current x, y, and quadrant
-    # Assumes at the edge
-    def switch_nearest_quadrant(self):
-        q = self.quadrant
-        x = self.x
-        y = self.y
-
-        q_new = self.get_next_quadrant()
-        x_new, y_new, o_new = x, y, self.orientation
-        if q == QUADRANT1:
-            if q_new == QUADRANT2:
-                x_new = 1
-                y_new = y
-                o_new = Orientation.E
-            elif q_new == QUADRANT3:
-                x_new = x
-                y_new = 3
-                o_new = Orientation.S
-        elif q == QUADRANT2:
-            if q_new == QUADRANT1:
-                x_new = 3
-                y_new = y
-                o_new = Orientation.W
-            elif q_new == QUADRANT4:
-                x_new = x
-                y_new = 3
-                o_new = Orientation.S
-        elif q == QUADRANT3:
-            if q_new == QUADRANT4:
-                x_new = 1
-                y_new = y
-                o_new = Orientation.E
-            elif q_new == QUADRANT1:
-                x_new = x
-                y_new = 1
-                o_new = Orientation.N
-        elif q == QUADRANT4:
-            if q_new == QUADRANT3:
-                x_new = 3
-                y_new = y
-                o_new = Orientation.W
-            elif q_new == QUADRANT2:
-                x_new = x
-                y_new = 1
-                o_new = Orientation.N
-
-        return (x_new, y_new, o_new, q_new)
-
-    # Returns new quadrant based on location. Assumes current (x, y) is on the
-    # edge of the current quadrant.
-    # Randomly chooses between two neighboring quadrants if at a corner.
-    def get_next_quadrant(self):
-        q = self.quadrant
-        x = self.x
-        y = self.y
-        rand = random.random()
-
-        if q == QUADRANT1:
-            if x == 3 and y == 1:
-                if QUADRANT1 in self.traversed_quadrants:
-                    return QUADRANT2
-                elif QUADRANT2 in self.traversed_quadrants:
-                    return QUADRANT1
-                else:
-                    return QUADRANT2 if rand > 0.5 else QUADRANT3
-            elif x == 3:
-                return QUADRANT2
-            elif y == 1:
-                return QUADRANT1
-        elif q == QUADRANT2:
-            if x == 1 and y == 1:
-                if QUADRANT1 in self.traversed_quadrants:
-                    return QUADRANT4
-                elif QUADRANT4 in self.traversed_quadrants:
-                    return QUADRANT1
-                else:
-                    return QUADRANT1 if rand > 0.5 else QUADRANT4
-            elif x == 1:
-                return QUADRANT1
-            elif y == 1:
-                return QUADRANT4
-        elif q == QUADRANT3:
-            if x == 3 and y == 3:
-                if QUADRANT1 in self.traversed_quadrants:
-                    return QUADRANT4
-                elif QUADRANT4 in self.traversed_quadrants:
-                    return QUADRANT1
-                else:
-                    return QUADRANT1 if rand > 0.5 else QUADRANT4
-            elif x == 3:
-                return QUADRANT4
-            elif y == 3:
-                return QUADRANT1
-        elif q == QUADRANT4:
-            if x == 1 and y == 3:
-                if QUADRANT2 in self.traversed_quadrants:
-                    return QUADRANT3
-                elif QUADRANT3 in self.traversed_quadrants:
-                    return QUADRANT2
-                else:
-                    return QUADRANT2 if rand > 0.5 else QUADRANT3
-            elif x == 1:
-                return QUADRANT3
-            elif y == 3:
-                return QUADRANT2
-
-    # Return a Set of all untraversed neighboring quadrants
-    def get_untraversed_neighbor_quadrants(self):
-        q = self.quadrant
-        neighbors = QUADRANT_NEIGHBORS[q]
-        return neighbors.difference(self.traversed_quadrants)
-
-    # Returns the next location given my current orientation
-    def get_next_location(self):
-        o = self.orientation
-        x_new, y_new = self.x, self.y
-
-        if o == Orientation.N:
-            y_new += 1
-        elif o == Orientation.E:
-            x_new += 1
-        elif o == Orientation.S:
-            y_new -= 1
-        elif o == Orientation.W:
-            x_new -= 1
-
-        return (x_new, y_new)
-
-    def copy_state(self, robot):
-        self.x = robot.x
-        self.y = robot.y
-        self.traversed = robot.traversed
-        self.orientation = robot.orientation
-        self.quadrant = robot.quadrant
+    def finished(self):
+        return self.state == RobotState.DONE
 
     # Moves the robot one step
     def move(self):
-        if self.state == RobotState.STABLE:
-            if self.is_blocked():
-                # Currently blocked
-                prev_q = self.quadrant
-                self.state = RobotState.TRANSITIONING
-                self.next_location() # moves to next location
-                self.traversed.clear()
-                if self.quadrant != prev_q:
-                    self.state = RobotState.STABLE
+        if len(self.assets) == 0:
+            self.state = RobotState.DONE
+
+        if self.state == RobotState.LOCAL_PATH_TRAVERSAL:
+            # Take the next step on path to next goal, deciding between the
+            # optimal and non-optimal path.
+            self.move_to_asset_local()
+        elif self.state == RobotState.SWITCH_QUADRANT:
+            # Take the next step on optimal path to next quadrant.
+            self.move_to_next_quadrant()
+        elif self.state == RobotState.EXPLORE:
+            self.explore()
+
+    def set_loc_global(self, loc_global):
+        xg, yg = loc_global
+        x, y, q = Grid.global_to_local(loc_global)
+
+        self.x = x
+        self.y = y
+        self.xg = xg
+        self.yg = yg
+        self.quadrant = q
+
+    def move_to_asset_local(self):
+        global_loc = (self.xg, self.yg)
+
+        if self.next_goal == global_loc:
+            # We're at the next asset
+            self.assets.pop(0)
+            if len(self.assets) == 0:
+                self.state = RobotState.DONE
+                return
+
+        # Check if we're now at the asset (in case upon moving into a quadrant,
+        # we've already landed at the asset)
+        if self.path is None or len(self.path) == 0:
+            next_asset = self.assets[0]
+            next_asset_quadrant = Grid.get_quadrant(next_asset)
+            if next_asset_quadrant != self.quadrant:
+                # Done with all assets in this quadrant, move to next quadrant
+                # OR explore current quadrant
+                self.next_goal = None
+                self.path = list()
+
+                # TODO: Probabilistic on area covered
+                rand = random.random()
+                if rand < 0.8:
+                    self.state = RobotState.SWITCH_QUADRANT
+                    self.move_to_next_quadrant()
+                else:
+                    self.state = RobotState.EXPLORE
+                    self.explore()
+
+                return
             else:
-                self.move_within_quadrant()
+                # If the next asset IS in the current quadrant, path to asset
+                self.next_goal = next_asset
+                self.path = Grid.get_shortest_path_global(global_loc, next_asset)
 
-        elif self.state == RobotState.TRANSITIONING:
-            prev_q = self.quadrant
-            self.next_location()
-            self.traversed.clear()
+                self.path.pop(0)
 
-            if self.quadrant != prev_q:
-                self.state = RobotState.STABLE
-
-        # Update global coords
-        self.xg, self.yg = Grid.local_to_global(self.x, self.y, self.quadrant)
-
-    # next_location
-    def next_location(self):
-        if self.can_switch_quadrant():
-            self.move_to_nearest_quadrant()
-        else:
-            self.move_towards_quadrant()
-
-    # Moves the robot within it's current quadrant, like sub_controller
-    def move_within_quadrant(self):
-        rand = random.random() * 100
-        rand_dir = random.random() * 100
-        neighbors = Grid.get_local_neighbors((self.x, self.y))
-
+        next_loc_global = self.path.pop(0)
+        self.set_loc_global(next_loc_global)
         self.traversed.add((self.x, self.y))
 
-        if rand > 100:
-            # TODO: Choose traversed locations that are neighbors of current location
-            print("hm")
-        else:
-            untraversed_neighbors = neighbors.difference(self.traversed)
+    # Take the next step on optimal path to next goal/asset.
+    # Assumes self.assets is in order.
+    def move_to_next_quadrant(self):
+        prev_q = self.quadrant
+        global_loc = (self.xg, self.yg)
 
-            # next location if going straight
-            next_straight_loc = self.get_next_location()
-            non_straight_neighbors = untraversed_neighbors.copy()
-            non_straight_neighbors.discard(next_straight_loc)
+        if self.path is None or len(self.path) == 0:
+            # If no path set OR if path is empty:
+            # Assign path to next asset (note: assets shouldn't be empty bc check in self.move)
+            asset_loc = self.assets[0]
+            self.next_goal = asset_loc
+            self.path = Grid.get_shortest_path_global(global_loc, asset_loc)
 
-            if len(untraversed_neighbors) == 0:
-                if next_straight_loc in neighbors:
-                    self.x, self.y = next_straight_loc
-                else:
-                    # Choose random neighbor
-                    index = 0 if len(neighbors) == 0 else random.randint(0, len(neighbors) - 1)
-                    n = list(neighbors)[index]
+            # Remove first location in path (current location)
+            self.path.pop(0)
 
-                    self.orientation = Orientation.get_orientation((self.x, self.y), n)
-                    self.x, self.y = n
-            else:
-                if rand_dir <= 90 and next_straight_loc in untraversed_neighbors:
-                    self.x, self.y = next_straight_loc
-                elif len(non_straight_neighbors) > 0:
-                    index = 0 if len(non_straight_neighbors) == 0 else random.randint(0, len(non_straight_neighbors) - 1)
-                    n = list(non_straight_neighbors)[index]
+        # Get next location in path to next asset
+        next_loc_global = self.path.pop(0)
+        self.set_loc_global(next_loc_global)
 
-                    self.orientation = Orientation.get_orientation((self.x, self.y), n)
-                    self.x, self.y = n
-                else:
-                    self.x, self.y = next_straight_loc
+        # If we've entered a new quadrant, clear self.traversed and switch to
+        # LOCAL_PATH_TRAVERSAL
+        if prev_q != self.quadrant:
+            self.traversed.clear()
+            self.traversed.add((self.x, self.y))
+            self.path = list()
+            self.state = RobotState.LOCAL_PATH_TRAVERSAL
 
-    # Move one step towards the nearest quadrant
-    # same as next_location
-    def move_to_nearest_quadrant(self):
-        q = self.quadrant
-        x = self.x
-        y = self.y
-        untraversed_neighbor_quadrants = self.get_untraversed_neighbor_quadrants()
-        neighbor_quadrant = list(untraversed_neighbor_quadrants)[0]
+    # Explore the current quadrant
+    def explore(self):
+        if self.path is None or len(self.path) == 0:
+            # No goal yet, find point in quadrant closest to next asset
+            asset_loc = self.assets[0]
+            quadrant_locs = Grid.get_quadrant_locs()
 
-        x_new, y_new, o_new, q_new = self.switch_nearest_quadrant()
+            # Get untraversed quadrant locations
+            valid_quadrant_locs = quadrant_locs.difference(self.traversed)
+            closest_loc = min(valid_quadrant_locs, key=lambda loc: Grid.dist(loc, asset_loc))
+            closest_loc_global = Grid.local_to_global(closest_loc, self.quadrant)
 
-        if q_new in self.traversed_quadrants:
-            # If quadrant we're trying to go to has been traversed,
-            # we might need to traverse over already traversed quadrant
-            if q == QUADRANT1:
-                if neighbor_quadrant == QUADRANT2:
-                    x_new = x + 1
-                    y_new = y + 1
-                    o_new = Orientation.E
-                    q_new = QUADRANT1
-                else:
-                    x_new = x
-                    y_new = y - 1
-                    o_new = Orientation.S
-                    q_new = QUADRANT1
-            elif q == QUADRANT2:
-                if neighbor_quadrant == QUADRANT1:
-                    x_new = x - 1
-                    y_new = y
-                    o_new = Orientation.W
-                    q_new = QUADRANT2
-                else:
-                    x_new = x
-                    y_new = y - 1
-                    o_new = Orientation.S
-                    q_new = QUADRANT2
-            elif q == QUADRANT3:
-                if neighbor_quadrant == QUADRANT4:
-                    x_new = x + 1
-                    y_new = y
-                    o_new = Orientation.E
-                    q_new = QUADRANT3
-                else:
-                    x_new = x
-                    y_new = y + 1
-                    o_new = Orientation.N
-                    q_new = QUADRANT3
-            elif q == QUADRANT4:
-                if neighbor_quadrant == QUADRANT3:
-                    x_new = x - 1
-                    y_new = y
-                    o_new = Orientation.W
-                    q_new = QUADRANT4
-                else:
-                    x_new = x
-                    y_new = y + 1
-                    o_new = Orientation.N
-                    q_new = QUADRANT4
+            global_loc = (self.xg, self.yg)
+            self.next_goal = closest_loc_global
+            self.path = Grid.get_shortest_path_global(global_loc, closest_loc_global)
 
-        self.x = x_new
-        self.y = y_new
-        self.orientation = o_new
-        self.quadrant = q_new
+            self.path.pop(0)
 
-    def move_towards_quadrant(self):
-        q = self.quadrant
-        x = self.x
-        y = self.y
-        untraversed_neighbor_quadrants = self.get_untraversed_neighbor_quadrants()
-        neighbor_quadrant = list(untraversed_neighbor_quadrants)[0]
-        x_new, y_new, o_new, q_new = x, y, self.orientation, q
+        next_loc_global = self.path.pop(0)
+        self.set_loc_global(next_loc_global)
 
-        if q == QUADRANT1:
-            if len(untraversed_neighbor_quadrants) == 2:
-                if y == 3:
-                    x_new = x + 1
-                    y_new = y
-                    o_new = Orientation.E
-                    q_new = QUADRANT1
-                else:
-                    x_new = x
-                    y_new = y - 1
-                    o_new = Orientation.S
-                    q_new = QUADRANT1
-            elif neighbor_quadrant == QUADRANT2:
-                x_new = x + 1
-                y_new = y
-                o_new = Orientation.E
-                q_new = QUADRANT1
-            else:
-                x_new = x
-                y_new = y - 1
-                o_new = Orientation.S
-                q_new = QUADRANT1
-        if q == QUADRANT2:
-            if len(untraversed_neighbor_quadrants) == 2:
-                if y == 3:
-                    x_new = x - 1
-                    y_new = y
-                    o_new = Orientation.W
-                    q_new = QUADRANT2
-                else:
-                    x_new = x
-                    y_new = y - 1
-                    o_new = Orientation.S
-                    q_new = QUADRANT2
-            elif neighbor_quadrant == QUADRANT1:
-                x_new = x - 1
-                y_new = y
-                o_new = Orientation.W
-                q_new = QUADRANT2
-            else:
-                x_new = x
-                y_new = y - 1
-                o_new = Orientation.S
-                q_new = QUADRANT2
-        if q == QUADRANT3:
-            if len(untraversed_neighbor_quadrants) == 2:
-                if y == 1:
-                    x_new = x + 1
-                    y_new = y
-                    o_new = Orientation.S
-                    q_new = QUADRANT3
-                else:
-                    x_new = x
-                    y_new = y + 1
-                    o_new = Orientation.N
-                    q_new = QUADRANT3
-            elif neighbor_quadrant == QUADRANT4:
-                x_new = x + 1
-                y_new = y
-                o_new = Orientation.S
-                q_new = QUADRANT3
-            else:
-                x_new = x
-                y_new = y + 1
-                o_new = Orientation.N
-                q_new = QUADRANT3
-        if q == QUADRANT4:
-            if len(untraversed_neighbor_quadrants) == 2:
-                if y == 1:
-                    x_new = x - 1
-                    y_new = y
-                    o_new = Orientation.W
-                    q_new = QUADRANT4
-                else:
-                    x_new = x
-                    y_new = y + 1
-                    o_new = Orientation.N
-                    q_new = QUADRANT4
-            elif neighbor_quadrant == QUADRANT3:
-                x_new = x - 1
-                y_new = y
-                o_new = Orientation.W
-                q_new = QUADRANT4
-            else:
-                x_new = x
-                y_new = y + 1
-                o_new = Orientation.N
-                q_new = QUADRANT4
+        if next_loc_global == self.next_goal:
+            self.state = RobotState.SWITCH_QUADRANT
+            self.path = list()
+            self.next_goal = None
 
-
-        self.x = x_new
-        self.y = y_new
-        self.orientation = o_new
-        self.quadrant = q_new
+        return None
 
 class Grid:
     def __init__(self,
@@ -530,6 +270,26 @@ class Grid:
 
         self.distribute_assets()
         self.compute_asset_paths()
+        # self.add_virtual_assets()
+
+    def add_virtual_assets(self):
+        for robot in self.robots:
+            quadrants = map(lambda asset: Grid.get_quadrant, robot.assets)
+
+            init_loc = (robot.xg, robot.yg)
+            init_q = Grid.get_quadrant(init_loc)
+            i = 0
+
+            path = [item for sublist in robot.asset_path for item in sublist]
+            actual_path = []
+            for i in range(1, len(path)):
+                if path[i] != path[i - 1]:
+                    actual_path.append(path[i - 1])
+
+            actual_path.append(path[len(path) - 1])
+
+            # for j in range(1, len(actual_path)):
+
 
     # Distributes self.assets to self.robots by quadrants.
     # There's probably a better way to do this
@@ -580,6 +340,21 @@ class Grid:
 
             robot.asset_path = asset_path
 
+    # Moves each of robots in self.robots one step
+    def step(self):
+        r = self.robots[0]
+        self.traversed.add((r.xg, r.yg))
+
+        r.move()
+
+    @staticmethod
+    def get_quadrant_locs():
+        locs = set()
+        for x in range(Q_WIDTH):
+            for y in range(Q_HEIGHT):
+                locs.add((x + 1, y + 1))
+
+        return locs
 
     # Returns the quadrant that loc is in.
     # Quadrants are ordered from the top left, while the grid is ordered
@@ -593,104 +368,64 @@ class Grid:
 
         return (num_rows - row - 1) * num_rows + col
 
-    # Moves each of robots in self.robots one step
-    # Currently assumes only one robot
-    # TODO: Implement multiple robot movement
-    def step(self):
-        r = self.robot
-
-        r.traversed_quadrants.add(r.quadrant)
-        self.traversed.add((r.xg, r.yg))
-
-        if r.finished and r.last_quadrant != r.quadrant:
-            self.finished = True
-            r.finished = False
-
-        r.move()
-
-        if len(r.traversed_quadrants) >= 4:
-            r.traversed_quadrants.clear()
-            r.finished = True
-            r.last_quadrant = r.quadrant
-
     # Converts global coords, 0 <= xg <= WIDTH and 0 <= yg <= HEIGHT to local
     # coords for a particular quadrant.
     # Returns x, y, and the quadrant.
     @staticmethod
-    def global_to_local(xg, yg):
-        x, y, quadrant = xg, yg, QUADRANT3
-        x_mid, y_mid = self.width / 2, self.height / 2
-        if xg < x_mid:
-            if yg < y_mid:
-                x = xg
-                y = yg
-                quadrant = QUADRANT3
-            else:
-                x = xg
-                y = yg - y_mid
-                quadrant = QUADRANT1
-        else:
-            if yg < self.height / 2:
-                x = xg - x_mid
-                y = yg
-                quadrant = QUADRANT4
-            else:
-                x = xg - x_mid
-                y = yg - y_mid
-                quadrant = QUADRANT2
-        return (int(x), int(y), quadrant)
+    def global_to_local_pos(xg, yg):
+        row = int(HEIGHT / Q_HEIGHT) - int((yg - 1) / Q_HEIGHT) - 1
+        col = int((xg - 1) / Q_WIDTH)
+
+        q = row * int(WIDTH / Q_WIDTH) + col + 1
+        x = xg % Q_WIDTH
+        y = yg % Q_HEIGHT
+        x = Q_WIDTH if x == 0 else x
+        y = Q_HEIGHT if y == 0 else y
+
+        return (x, y, q)
 
     @staticmethod
-    def local_to_global(x, y, quadrant):
-        xg, yg = x, y
-        x_mid = WIDTH / 2
-        y_mid = HEIGHT / 2
+    def global_to_local(loc):
+        return Grid.global_to_local_pos(loc[0], loc[1])
 
-        # Don't need to modify for Q3
-        if quadrant == QUADRANT4:
-            xg += x_mid
-        elif quadrant == QUADRANT1:
-            yg += y_mid
-        elif quadrant == QUADRANT2:
-            xg += x_mid
-            yg += y_mid
+    @staticmethod
+    def local_to_global_pos(x, y, quadrant):
+        row = int((quadrant - 1) / (HEIGHT / Q_HEIGHT))
+        col = int((quadrant - 1) % (WIDTH / Q_WIDTH))
+
+        xg = col * Q_WIDTH + x
+        yg = (int(HEIGHT / Q_HEIGHT) - row - 1) * Q_HEIGHT + y
 
         return (int(xg), int(yg))
+
+    @staticmethod
+    def local_to_global(loc, quadrant):
+        return Grid.local_to_global_pos(loc[0], loc[1], quadrant)
+
+    @staticmethod
+    def get_neighbors(loc, width_bound, height_bound):
+        x, y = loc
+        neighbors = set()
+
+        if (x < width_bound):
+            neighbors.add((x + 1, y))
+        if (x > 1):
+            neighbors.add((x - 1, y))
+        if (y < height_bound):
+            neighbors.add((x, y + 1))
+        if (y > 1):
+            neighbors.add((x, y - 1))
+
+        return neighbors
 
     # Get set of (x,y) tuples of valid neighbors in current quadrant
     @staticmethod
     def get_local_neighbors(loc):
-        x, y = loc
-        q_width = WIDTH / 2
-        q_height = HEIGHT / 2
-        neighbors = set()
-
-        if (x < q_width):
-            neighbors.add((x + 1, y))
-        if (x > 1):
-            neighbors.add((x - 1, y))
-        if (y < q_height):
-            neighbors.add((x, y + 1))
-        if (y > 1):
-            neighbors.add((x, y - 1))
-
-        return neighbors
+        return Grid.get_neighbors(loc, Q_WIDTH, Q_HEIGHT)
 
     @staticmethod
     def get_global_neighbors(loc):
-        x, y = loc
-        neighbors = set()
-
-        if (x < WIDTH):
-            neighbors.add((x + 1, y))
-        if (x > 1):
-            neighbors.add((x - 1, y))
-        if (y < HEIGHT):
-            neighbors.add((x, y + 1))
-        if (y > 1):
-            neighbors.add((x, y - 1))
-
-        return neighbors
+        return Grid.get_neighbors(loc, WIDTH, HEIGHT)
 
     # Computes the min. Manhattan distance between loc1 and loc2
     @staticmethod
@@ -753,16 +488,26 @@ class Grid:
 
 r1 = Robot()
 r2 = Robot(xg = 6, yg = 6)
-print(str(r2))
-asset_lists = list()
-asset_lists.append((1, 3))
-asset_lists.append((5, 5))
+
+asset_list = list()
+asset_list.append((3, 1))
+asset_list.append((1, 3))
+asset_list.append((2, 6))
+asset_list.append((5, 5))
+
 grid = Grid(
-    robots = [r1, r2],
-    assets = asset_lists)
+    robots = [r1],
+    assets = asset_list)
 
 print(r1.asset_path)
-print(r2.asset_path)
+
+print("Beginning simulation...")
+print("Asset list: " + str(asset_list))
+while r1.state != RobotState.DONE:
+    print(r1)
+    grid.step()
+
+print(r1)
 
 def calculate_percentage():
     total = 0.0
