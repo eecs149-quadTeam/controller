@@ -247,6 +247,7 @@ class Robot:
             self.next_goal = asset_loc
             # self.probabilistic_assign_path()
             self.path = Grid.get_shortest_path_global(global_loc, self.next_goal)
+            self.path.pop(0)
 
         # Get next location in path to next asset
         next_loc_global = self.path.pop(0)
@@ -542,18 +543,23 @@ def send_step():
         grid.step()
 
         loc1 = (r1.xg, r1.yg)
-        o1 = r1.orientation.value
-        turn_amt = (o1 - o0 + 4) % 4
 
-        print("Turning Kobuki " + str(turn_amt * 90) + " deg and moving forward 1 step.")
         print("R1: {0}".format(r1))
         print("R2: {0}".format(r2))
-        print()
-        # yield from ws.send(str(turn_amt))
-        yield from ws1.send(str(r1.xg) + "," + str(r1.yg))
-        # yield from ws2.send(str(r2.xg) + "," + str(r2.yg))
 
-        yield from asyncio.sleep(1)
+        if loc0 != loc1:
+            r1.orientation = Orientation.get_orientation(loc0, loc1)
+            o1 = r1.orientation.value
+            turn_amt = (o1 - o0 + 4) % 4
+
+            print("Turning Kobuki #1 " + str(turn_amt * 90) + " deg and moving forward 1 step.")
+
+            yield from ws1.send(str(turn_amt))
+            # yield from ws1.send(str(r1.xg) + "," + str(r1.yg))
+            # yield from ws2.send(str(r2.xg) + "," + str(r2.yg))
+            yield from asyncio.sleep(1)
+
+        print()
 
 asyncio.get_event_loop().run_until_complete(send_step())
 
