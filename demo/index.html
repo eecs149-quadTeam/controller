@@ -46,11 +46,13 @@
             var $grid = $('#grid');
             var r1 = {
                 x: 1,
-                y: 1
+                y: 1,
+                o: 0
             };
             var r2 = {
-                x: 8,
-                y: 6
+                x: 9,
+                y: 6,
+                o: 2
             };
             var assetLocs = [[3, 1], [2, 4], [1, 6], [7, 5], [9, 3]];
 
@@ -74,15 +76,39 @@
             r1.ws = new WebSocket("ws://localhost:5000");
             r2.ws = new WebSocket("ws://localhost:5001");
 
-            function applyCoord(robot, coord) {
-                coord = coord.split(",");
-                var x = Number(coord[0]);
-                var y = Number(coord[1]);
+            function parseMessage(robot, orientation) {
+                orientation = Number(orientation)
+                var r_o = robot.o;
+                var dx = 0;
+                var dy = 0;
 
-                robot.x = x;
-                robot.y = y;
+                if (orientation == 0) { // straight
+                    if (r_o == 0) dy = 1;
+                    if (r_o == 1) dx = 1;
+                    if (r_o == 2) dy = -1;
+                    if (r_o == 3) dx -= 1;
+                } else if (orientation == 1) {
+                    if (r_o == 0) dx = 1;
+                    if (r_o == 1) dy = -1;
+                    if (r_o == 2) dx -= 1;
+                    if (r_o == 3) dy = 1;
+                } else if (orientation == 2) {
+                    if (r_o == 0) dy = -1;
+                    if (r_o == 1) dx = -1;
+                    if (r_o == 2) dy = 1;
+                    if (r_o == 3) dx = 1;
+                } else if (orientation == 3) {
+                    if (r_o == 0) dx = -1;
+                    if (r_o == 1) dy = 1;
+                    if (r_o == 2) dx = 1;
+                    if (r_o == 3) dy = -1;
+                }
 
-                console.log("Moving robot to " + x + ", " + y);
+                robot.o = (r_o + orientation + 4) % 4;
+                robot.x += dx;
+                robot.y += dy;
+
+                console.log("Moving robot to " + robot.x + ", " + robot.y + ". Current orientation: " + robot.o);
             }
 
             function draw() {
@@ -112,7 +138,7 @@
                 var msg = event.data;
 
                 console.log("received " + msg + " on from 5000");
-                applyCoord(r1, msg);
+                parseMessage(r1, msg);
                 draw();
             }
 
@@ -120,7 +146,7 @@
                 var msg = event.data;
 
                 console.log("received " + msg + " on from 5001");
-                applyCoord(r2, msg);
+                parseMessage(r2, msg);
                 draw();
             }
 
