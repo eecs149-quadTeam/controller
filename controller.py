@@ -306,6 +306,9 @@ class Robot:
             self.path = list()
             self.next_goal = None
 
+    def longest(self, valid_quadrant_locs, closest_loc_to_next_asset):
+        return min(valid_quadrant_locs, key= lambda loc: Grid.dist(loc,closest_loc_to_next_asset))
+
 class Grid:
     def __init__(self,
                  width = WIDTH,
@@ -583,7 +586,7 @@ def send_step():
             yield from ws2.send(str(r2_turn_amt))
             # yield from ws1.send(str(r1.xg) + "," + str(r1.yg))
             # yield from ws2.send(str(r2.xg) + "," + str(r2.yg))
-            yield from asyncio.sleep(1.5)
+            yield from asyncio.sleep(0.5)
         print()
 
 asyncio.get_event_loop().run_until_complete(send_step())
