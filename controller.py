@@ -31,6 +31,10 @@ P_EXPLORE = 0.2
 # next asset in a quadrant
 P_OPTIMAL = 0.5
 
+# Probability that the Kobuki will move to a untraversed location that is the furthest from the
+# untraversed location that is closest ot the next asset
+P_UNTRAVERSED_FURTHEST = 1
+
 NUM_STEPS = 40
 NUM_RUNS = 2000
 MAX_NUM_STEPS = 50
@@ -216,7 +220,7 @@ class Robot:
 
                 # TODO: Probabilistic on area covered
                 rand = random.random()
-                if rand < P_EXPLORE:
+                if rand < P_EXPLORE and len(self.traversed) < Q_WIDTH * Q_HEIGHT:
                     self.state = RobotState.EXPLORE
                     self.explore()
                 else:
@@ -265,18 +269,29 @@ class Robot:
     # Explore the current quadrant
     def explore(self):
         global_loc = (self.xg, self.yg)
+        # Get untraversed quadrant locations
+        asset_loc = self.assets[0]
+        quadrant_locs = Grid.get_quadrant_locs()
+        valid_quadrant_locs = quadrant_locs.difference(self.traversed)
 
+        if len(valid_quadrant_locs) == 0:
+            self.state = RobotState.SWITCH_QUADRANT
+            self.path = list()
+            self.next_goal = None
+            return
+
+        closest_loc_to_next_asset = min(valid_quadrant_locs, key=lambda loc: Grid.dist(loc, asset_loc))
+        closest_loc_local_global = Grid.local_to_global(closest_loc_to_next_asset, self.quadrant)
         if self.path is None or len(self.path) == 0:
             # No goal yet, find point in quadrant closest to next asset
-            asset_loc = self.assets[0]
-            quadrant_locs = Grid.get_quadrant_locs()
-
-            # Get untraversed quadrant locations
-            valid_quadrant_locs = quadrant_locs.difference(self.traversed)
-            closest_loc_to_next_asset = min(valid_quadrant_locs, key=lambda loc: Grid.dist(loc, asset_loc))
-            closest_loc_global = Grid.local_to_global(closest_loc_to_next_asset, self.quadrant)
-
-            self.next_goal = closest_loc_global
+            # from valid_quadrant_locs, find the furthest untraversed location from closest_loc_to_next_asset
+            longest_untraversed_local = self.longest(valid_quadrant_locs, closest_loc_to_next_asset)
+            longest_untraversed_loc_global = Grid.local_to_global(longest_untraversed_local, self.quadrant)
+            rand = random.random()
+            if (self.next_goal != closest_loc_local_global and rand < P_UNTRAVERSED_FURTHEST):
+                self.next_goal = longest_untraversed_loc_global
+            else:
+                self.next_goal = closest_loc_local_global
 
             # self.probabilistic_assign_path()
             self.path = Grid.get_shortest_path_global(global_loc, self.next_goal)
@@ -286,12 +301,10 @@ class Robot:
         self.set_loc_global(next_loc_global)
         self.traversed.add((self.x, self.y))
 
-        if next_loc_global == self.next_goal:
+        if next_loc_global == self.next_goal and self.next_goal == closest_loc_to_next_asset:
             self.state = RobotState.SWITCH_QUADRANT
             self.path = list()
             self.next_goal = None
-
-        return None
 
 class Grid:
     def __init__(self,
@@ -570,7 +583,7 @@ def send_step():
             yield from ws2.send(str(r2_turn_amt))
             # yield from ws1.send(str(r1.xg) + "," + str(r1.yg))
             # yield from ws2.send(str(r2.xg) + "," + str(r2.yg))
-            yield from asyncio.sleep(5.5)
+            yield from asyncio.sleep(1.5)
         print()
 
 asyncio.get_event_loop().run_until_complete(send_step())
