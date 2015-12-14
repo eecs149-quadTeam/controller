@@ -25,7 +25,7 @@ NUM_ROBOTS = 1
 # Probabilisties
 # Probability that the Kobuki enters "explore" mode after finishing all assets
 # in a quadrant
-P_EXPLORE = 0.2
+P_EXPLORE = 0.33
 
 # Probability that the Kobuki takes an optimal path when navigating to the
 # next asset in a quadrant
@@ -33,11 +33,9 @@ P_OPTIMAL = 0.5
 
 # Probability that the Kobuki will move to a untraversed location that is the furthest from the
 # untraversed location that is closest ot the next asset
-P_UNTRAVERSED_FURTHEST = 1
+P_UNTRAVERSED_FURTHEST = 0.8
 
-NUM_STEPS = 40
-NUM_RUNS = 2000
-MAX_NUM_STEPS = 50
+ASSET_LIST = [(3, 1), (2, 2), (2, 4), (1, 6), (6, 2), (4, 4), (7, 5), (5, 6), (9, 3), (8, 1)]
 
 class Orientation(Enum):
     N = 0
@@ -161,6 +159,7 @@ class Robot:
         self.yg = yg
         self.quadrant = q
 
+
     # Assigns a new value to self.path, assumes self.next_goal is set
     def probabilistic_assign_path(self):
         global_loc = (self.xg, self.yg)
@@ -185,17 +184,22 @@ class Robot:
                     invalid_locs))
 
             paths = list(filter(None, paths))
-            max_path = max(paths, key=len)
-            max_path_length = len(max_path)
 
-            long_paths = list(filter(lambda path: len(path) == max_path_length, paths))
+            if len(paths) == 0:
+                self.path = Grid.get_shortest_path_global(global_loc, self.next_goal)
+                self.path.pop(0)
+            else:
+                max_path = max(paths, key=len)
+                max_path_length = len(max_path)
 
-            # Choose random path if multiple with same length
-            if len(long_paths) > 1:
-                rand_index = random.randint(0, len(long_paths) - 1)
-                max_path = long_paths[rand_index]
+                long_paths = list(filter(lambda path: len(path) == max_path_length, paths))
 
-            self.path = max_path
+                # Choose random path if multiple with same length
+                if len(long_paths) > 1:
+                    rand_index = random.randint(0, len(long_paths) - 1)
+                    max_path = long_paths[rand_index]
+
+                self.path = max_path
 
     def local_path_traversal(self):
         global_loc = (self.xg, self.yg)
@@ -250,7 +254,12 @@ class Robot:
             asset_loc = self.assets[0]
             self.next_goal = asset_loc
             # self.probabilistic_assign_path()
-            self.path = Grid.get_shortest_path_global(global_loc, self.next_goal)
+            quadrants = set()
+
+            for asset in self.assets_copy:
+                quadrants.add(Grid.get_quadrant(asset))
+
+            self.path = Grid.get_shortest_path_global(global_loc, self.next_goal, quadrants = quadrants)
             self.path.pop(0)
 
         # Get next location in path to next asset
@@ -278,10 +287,12 @@ class Robot:
             self.state = RobotState.SWITCH_QUADRANT
             self.path = list()
             self.next_goal = None
+            self.switch_quadrant()
             return
 
         closest_loc_to_next_asset = min(valid_quadrant_locs, key=lambda loc: Grid.dist(loc, asset_loc))
         closest_loc_local_global = Grid.local_to_global(closest_loc_to_next_asset, self.quadrant)
+
         if self.path is None or len(self.path) == 0:
             # No goal yet, find point in quadrant closest to next asset
             # from valid_quadrant_locs, find the furthest untraversed location from closest_loc_to_next_asset
@@ -486,17 +497,17 @@ class Grid:
         return abs((x2 - x1) + (y2 - y1))
 
     @staticmethod
-    def get_shortest_path_global(loc1, loc2, invalid_locs = set()):
-        return Grid.get_shortest_path(loc1, loc2, Grid.get_global_neighbors, invalid_locs)
+    def get_shortest_path_global(loc1, loc2, invalid_locs = set(), quadrants = set()):
+        return Grid.get_shortest_path(loc1, loc2, Grid.get_global_neighbors, invalid_locs, quadrants)
 
     @staticmethod
-    def get_shortest_path_local(loc1, loc2, invalid_locs = set()):
-        return Grid.get_shortest_path(loc1, loc2, Grid.get_local_neighbors, invalid_locs)
+    def get_shortest_path_local(loc1, loc2, invalid_locs = set(), quadrants = set()):
+        return Grid.get_shortest_path(loc1, loc2, Grid.get_local_neighbors, invalid_locs, quadrants)
 
     # Computes the shortest path from loc2 to loc2.
     # Returns a list of (x, y) tuples or None if no path found
     @staticmethod
-    def get_shortest_path(loc1, loc2, neighbor_func, invalid_locs = set()):
+    def get_shortest_path(loc1, loc2, neighbor_func, invalid_locs = set(), quadrants = set()):
         x1, y1 = loc1
         x2, y2 = loc2
 
@@ -514,6 +525,9 @@ class Grid:
 
             for neighbor in neighbors:
                 if neighbor not in visited and neighbor not in invalid_locs:
+                    if len(quadrants) > 0:
+                        if Grid.get_quadrant(neighbor) not in quadrants:
+                            continue
                     parents[neighbor] = curr
                     visited.add(neighbor)
                     q.put(neighbor)
@@ -535,11 +549,9 @@ class Grid:
 r1 = Robot()
 r2 = Robot(x = 3, y = 2, xg = 9, yg = 6, orientation = Orientation.S, quadrant = 3)
 
-asset_list = [(3, 1), (2, 4), (1, 6), (7, 5), (9, 3)]
-
 grid = Grid(
     robots = [r1, r2],
-    assets = asset_list)
+    assets = ASSET_LIST)
 
 @asyncio.coroutine
 def send_step():
@@ -548,7 +560,7 @@ def send_step():
     ws2 = yield from websockets.connect("ws://localhost:5001")
 
     print("Beginning simulation in {0} seconds...".format(init_delay))
-    print("Asset list: {0}".format(asset_list))
+    print("Asset list: {0}".format(ASSET_LIST))
     print("Initial state of Kobukis:")
     print("R1: {0}".format(r1))
     print("R2: {0}".format(r2))
@@ -586,12 +598,15 @@ def send_step():
             yield from ws2.send(str(r2_turn_amt))
             # yield from ws1.send(str(r1.xg) + "," + str(r1.yg))
             # yield from ws2.send(str(r2.xg) + "," + str(r2.yg))
-            yield from asyncio.sleep(0.5)
+            yield from asyncio.sleep(0.4)
         print()
 
 asyncio.get_event_loop().run_until_complete(send_step())
 
-"""
+NUM_STEPS = 60
+NUM_RUNS = 2000
+MAX_NUM_STEPS = 50
+
 def calculate_percentage():
     total = 0.0
     total_steps = 0
@@ -615,6 +630,17 @@ def calculate_percentage():
 
     return (total / NUM_RUNS, total_steps / NUM_RUNS)
 
-avg_percent, avg_steps = calculate_percentage()
-print("For {0} runs, avg. % traversed: {1}, avg. # steps: {2}".format(NUM_RUNS, avg_percent, avg_steps));
-"""
+def calculate_area_coverage():
+    r1 = Robot()
+    r2 = Robot(x = 3, y = 2, xg = 9, yg = 6, orientation = Orientation.S, quadrant = 3)
+
+    grid = Grid(
+        robots = [r1, r2],
+        assets = ASSET_LIST)
+
+    for i in range(NUM_STEPS):
+        r1 = Robot()
+
+#avg_percent, avg_steps = calculate_percentage()
+#print("For {0} runs, avg. % traversed: {1}, avg. # steps: {2}".format(NUM_RUNS, avg_percent, avg_steps));
+

@@ -30,7 +30,7 @@
 
         .square.traversed {
             background: lightblue;
-            transition: all 12s;
+            transition: all 4s;
         }
 
         .square-asset {
@@ -38,12 +38,19 @@
             border: 10px solid orange;
             opacity: 0.6;
         }
+
+        .square.current {
+            background: url('http://static.generation-robots.com/img/cms/400xNxMobile-Robot-Kobuki.jpg.pagespeed.ic.iuebohYtHZ.jpg') no-repeat;
+            background-size: cover;
+            background-color: white;
+        }
     </style>
 
     <script src="jquery.js"></script>
     <script type="text/javascript">
         $(function () {
             var $grid = $('#grid');
+
             var r1 = {
                 x: 1,
                 y: 1,
@@ -54,7 +61,11 @@
                 y: 6,
                 o: 2
             };
-            var assetLocs = [[3, 1], [2, 4], [1, 6], [7, 5], [9, 3]];
+
+            var $r1 = $('sq-' + r1.x + '-' + r1.y);
+            var $r2 = $('sq-' + r2.x + '-' + r2.y);
+
+            var assetLocs = [[3, 1], [2, 2], [2, 4], [1, 6], [6, 2], [4, 4], [7, 5], [5, 6], [9, 3], [8, 1]];
 
             function setup() {
                 for (var x = 0; x < 9; x++) {
@@ -116,8 +127,14 @@
                 var r2id = "sq-" + r2.x + "-" + r2.y;
 
                 var $r1loc = $('#' + r1id);
+
+                $r1.removeClass('current');
+
+                $r1loc.addClass('current');
                 $r1loc.removeClass('traversed');
                 $r1loc.addClass('traversing');
+
+                $r1 = $r1loc;
 
                 setTimeout(function () {
                     $r1loc.removeClass('traversing');
@@ -125,8 +142,14 @@
                 }, 500);
 
                 var $r2loc = $('#' + r2id);
+
+                $r2.removeClass('current');
+
+                $r2loc.addClass('current');
                 $r2loc.removeClass('traversed');
                 $r2loc.addClass('traversing');
+
+                $r2 = $r2loc;
 
                 setTimeout(function () {
                     $r2loc.removeClass('traversing');
